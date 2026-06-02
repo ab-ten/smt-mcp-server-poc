@@ -1,2 +1,3 @@
 /.editorconfig
 /.env
+/bin/tunnel-client

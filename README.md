@@ -1,4 +1,4 @@
-# Secur MCP Tunnel MCP Server PoC
+# Secure MCP Tunnel MCP Server PoC
 
 ローカルワークスペース内のテキストファイルを読み取り専用で参照するための MCP サーバー PoC です。
 
@@ -48,7 +48,22 @@ Docker コンテナ内で Python 製の MCP サーバーを起動し、`tunnel-c
 
 ## セットアップ
 
-### 1. Docker イメージのビルド
+### 1. tunnel-client の配置
+
+`tunnel-client` はリポジトリに含めません。GitHub Releases から Linux 用の実行バイナリを取得し、展開後の実行ファイルを `bin/tunnel-client` として配置してください。
+
+取得元:
+
+- https://github.com/openai/tunnel-client/releases
+
+配置後の構成は次のとおりです。
+
+```text
+bin/
+└── tunnel-client
+```
+
+### 2. Docker イメージのビルド
 
 Windows では次のコマンドを実行します。
 
@@ -62,7 +77,7 @@ build.cmd
 docker build -t smt-local-files-mcp .
 ```
 
-### 2. 環境変数の設定
+### 3. 環境変数の設定
 
 `app/entrypoint.sh` は、次の環境変数を必須として扱います。
 
