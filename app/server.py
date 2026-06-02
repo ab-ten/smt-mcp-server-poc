@@ -53,6 +53,8 @@ ALLOW_NAMES = {
   "Dockerfile", "Makefile", "CMakeLists.txt", "LICENSE",
 }
 
+FALLBACK_ENCODING_EXTS = {".bat", ".cmd"}
+
 def _parts(path: str) -> tuple[str, ...]:
   normalized = (path or "").replace("\\", "/")
   if normalized.startswith("/"):
@@ -92,6 +94,19 @@ def _is_denied_file(path: Path) -> bool:
     return True
   return False
 
+def _text_encodings(path: Path) -> tuple[str, ...]:
+  if path.suffix.lower() in FALLBACK_ENCODING_EXTS:
+    return ("utf-8", "cp932")
+  return ("utf-8",)
+
+def _decode_text(path: Path, data: bytes) -> str:
+  for encoding in _text_encodings(path):
+    try:
+      return data.decode(encoding)
+    except UnicodeDecodeError:
+      continue
+  raise UnicodeDecodeError("utf-8", data, 0, 1, "file is not valid text")
+
 def _is_probably_text(path: Path, max_bytes: int) -> bool:
   if not path.is_file():
     return False
@@ -100,14 +115,17 @@ def _is_probably_text(path: Path, max_bytes: int) -> bool:
   if path.stat().st_size > max_bytes:
     return False
 
-  sample = path.read_bytes()[:4096]
-  if b"\x00" in sample:
+  data = path.read_bytes()
+  if b"\x00" in data:
     return False
   try:
-    sample.decode("utf-8")
+    _decode_text(path, data)
   except UnicodeDecodeError:
     return False
   return True
+
+def _read_text_file(path: Path) -> str:
+  return _decode_text(path, path.read_bytes())
 
 def _walk_files(base: Path):
   if base.is_file():
@@ -196,10 +214,10 @@ def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str
 
 @mcp.tool()
 def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str, Any]:
-  """Read a UTF-8 text file from the workspace. This tool is read-only."""
+  """Read a text file from the workspace. This tool is read-only."""
   file_path = _safe_path(path)
   if not _is_probably_text(file_path, MAX_READ_BYTES):
-    raise ValueError("file is not allowed, is too large, or is not UTF-8 text")
+    raise ValueError("file is not allowed, is too large, or is not supported text")
 
   start_line = max(1, start_line)
   max_lines = max(1, min(max_lines, 2000))
@@ -207,14 +225,13 @@ def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str,
   selected: list[str] = []
   end_line = start_line - 1
 
-  with file_path.open("r", encoding="utf-8", errors="strict") as f:
-    for line_no, line in enumerate(f, start=1):
-      if line_no < start_line:
-        continue
-      if len(selected) >= max_lines:
-        break
-      selected.append(line.rstrip("\n"))
-      end_line = line_no
+  for line_no, line in enumerate(_read_text_file(file_path).splitlines(), start=1):
+    if line_no < start_line:
+      continue
+    if len(selected) >= max_lines:
+      break
+    selected.append(line)
+    end_line = line_no
 
   return {
     "path": _rel(file_path),
@@ -231,7 +248,7 @@ def search_text(
   case_sensitive: bool = False,
   max_results: int = 100,
 ) -> list[dict[str, Any]]:
-  """Search UTF-8 text files under the workspace. This tool is read-only."""
+  """Search text files under the workspace. This tool is read-only."""
   if not query:
     raise ValueError("query is required")
 
@@ -246,16 +263,15 @@ def search_text(
     if not _is_probably_text(file_path, MAX_SCAN_BYTES):
       continue
 
-    with file_path.open("r", encoding="utf-8", errors="strict") as f:
-      for line_no, line in enumerate(f, start=1):
-        if pattern.search(line):
-          results.append({
-            "path": _rel(file_path),
-            "line": line_no,
-            "text": line.rstrip("\n")[:500],
-          })
-          if len(results) >= max_results:
-            return results
+    for line_no, line in enumerate(_read_text_file(file_path).splitlines(), start=1):
+      if pattern.search(line):
+        results.append({
+          "path": _rel(file_path),
+          "line": line_no,
+          "text": line[:500],
+        })
+        if len(results) >= max_results:
+          return results
 
   return results
 
