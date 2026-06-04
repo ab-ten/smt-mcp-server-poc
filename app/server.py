@@ -7,8 +7,20 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
-mcp = FastMCP("local-files-readonly")
+MCP_HTTP_HOST = os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
+MCP_HTTP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8000"))
+MCP_HTTP_PATH = os.environ.get("MCP_HTTP_PATH", "/mcp")
+
+mcp = FastMCP(
+  "local-files-readonly",
+  host=MCP_HTTP_HOST,
+  port=MCP_HTTP_PORT,
+  streamable_http_path=MCP_HTTP_PATH,
+  stateless_http=True,
+  json_response=True,
+)
 
 ROOT = Path(os.environ.get("MCP_ROOT", "/workspace")).resolve()
 MAX_READ_BYTES = int(os.environ.get("MAX_READ_BYTES", "262144"))
@@ -275,5 +287,11 @@ def search_text(
 
   return results
 
+
+@mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
+async def healthz(request):
+  return JSONResponse({"status": "ok"})
+
+
 if __name__ == "__main__":
-  mcp.run()
+  mcp.run(transport="streamable-http")

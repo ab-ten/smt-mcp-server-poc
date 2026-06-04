@@ -10,4 +10,4 @@ if exist "%~dp0\.env" (
 )
 
 
-docker run --rm -it %OPTIONS% -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m %* smt-local-files-mcp
+docker run --rm -it --init %OPTIONS% -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m %* smt-local-files-mcp
