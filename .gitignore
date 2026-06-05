@@ -1,3 +1,4 @@
 /.editorconfig
 /.env
 /bin/tunnel-client
+/app/__pycache__/
