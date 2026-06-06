@@ -189,6 +189,7 @@ def _split_env_list(value: str) -> set[str]:
   return {x.strip().lower() for x in value.replace("\n", ",").split(",") if x.strip()}
 
 ALLOW_EXTS = _split_env_list(os.environ.get("ALLOW_EXTS", DEFAULT_ALLOW_EXTS))
+DENY_NAMES_IGNORECASE = _env_bool("DENY_NAMES_IGNORECASE", True)
 
 SKIP_DIRS = {
   ".git", ".hg", ".svn",
@@ -203,6 +204,8 @@ DENY_NAMES = {
   "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa",
   "known_hosts",
 }
+
+DENY_NAMES_NORMALIZED = {name.casefold() for name in DENY_NAMES}
 
 DENY_EXTS = {
   ".pem", ".key", ".p12", ".pfx", ".kdbx", ".age",
@@ -245,8 +248,13 @@ def _rel(path: Path) -> str:
 def _is_skipped_dir(path: Path) -> bool:
   return path.name in SKIP_DIRS or path.is_symlink()
 
+def _is_denied_name(name: str) -> bool:
+  if DENY_NAMES_IGNORECASE:
+    return name.casefold() in DENY_NAMES_NORMALIZED
+  return name in DENY_NAMES
+
 def _is_denied_file(path: Path) -> bool:
-  if path.name in DENY_NAMES:
+  if _is_denied_name(path.name):
     return True
   if path.suffix.lower() in DENY_EXTS:
     return True

@@ -94,6 +94,7 @@ docker build -t smt-local-files-mcp .
 | `MAX_SCAN_BYTES` | いいえ | `search_text` で走査可能な最大ファイルサイズです。既定値は `1048576` です。 |
 | `MAX_RESULTS` | いいえ | 検索系ツールの最大結果件数です。既定値は `100` です。 |
 | `ALLOW_EXTS` | いいえ | 読み取り対象として許可する拡張子のカンマ区切りリストです。未指定時はソースコード、設定ファイル、ドキュメント系の拡張子が許可されます。 |
+| `DENY_NAMES_IGNORECASE` | いいえ | 拒否対象のファイル名を大小文字を区別せずに比較します。`0`、`false`、`no`、`off` のいずれかで大小文字を区別する比較に戻せます。既定値は有効です。 |
 | `MCP_AUTH_ENABLED` | いいえ | Cognito 認証を有効化するかどうかを指定します。`1`、`true`、`yes`、`on` のいずれかで有効になります。既定値は無効です。 |
 | `COGNITO_REGION` | 認証有効時ははい | Cognito ユーザープールの AWS リージョンです。 |
 | `COGNITO_USER_POOL_ID` | 認証有効時ははい | Cognito ユーザープール ID です。 |
