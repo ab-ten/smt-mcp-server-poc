@@ -8,6 +8,7 @@ import asyncio
 from typing import Any
 
 import jwt
+from pathspec import PathSpec
 from jwt import InvalidTokenError, PyJWKClient
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -174,6 +175,7 @@ ROOT = Path(os.environ.get("MCP_ROOT", "/workspace")).resolve()
 MAX_READ_BYTES = int(os.environ.get("MAX_READ_BYTES", "262144"))
 MAX_SCAN_BYTES = int(os.environ.get("MAX_SCAN_BYTES", "1048576"))
 MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "100"))
+MCP_IGNORE_NAME = ".mcpignore"
 
 DEFAULT_ALLOW_EXTS = """
 .py,.pyi,.rs,.c,.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx,
@@ -202,7 +204,7 @@ DENY_NAMES = {
   ".env", ".env.local", ".env.production",
   ".npmrc", ".pypirc", ".netrc",
   "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa",
-  "known_hosts",
+  "known_hosts", MCP_IGNORE_NAME,
 }
 
 DENY_NAMES_NORMALIZED = {name.casefold() for name in DENY_NAMES}
@@ -245,8 +247,54 @@ def _rel(path: Path) -> str:
     return "."
   return path.relative_to(ROOT).as_posix()
 
+def _ancestor_dirs_from_root(path: Path) -> list[Path]:
+  if path == ROOT:
+    return [ROOT]
+
+  dirs = [ROOT]
+  cur = ROOT
+  for part in path.relative_to(ROOT).parts:
+    cur = cur / part
+    dirs.append(cur)
+  return dirs
+
+def _mcpignore_dirs_for(path: Path) -> list[Path]:
+  return _ancestor_dirs_from_root(path.parent)
+
+def _is_ignored_by_mcpignore(path: Path, is_dir: bool) -> bool:
+  if path == ROOT:
+    return False
+
+  ignored = False
+  for ignore_dir in _mcpignore_dirs_for(path):
+    ignore_file = ignore_dir / MCP_IGNORE_NAME
+    if not ignore_file.is_file() or ignore_file.is_symlink():
+      continue
+
+    lines = ignore_file.read_text(encoding="utf-8").splitlines()
+    spec = PathSpec.from_lines("gitwildmatch", lines)
+    rel = path.relative_to(ignore_dir).as_posix()
+    candidates = [rel]
+    if is_dir:
+      candidates.append(f"{rel}/")
+
+    if any(spec.match_file(candidate) for candidate in candidates):
+      ignored = True
+    elif any(
+      pattern.include is False and pattern.match_file(candidate)
+      for pattern in spec.patterns
+      for candidate in candidates
+    ):
+      ignored = False
+
+  return ignored
+
 def _is_skipped_dir(path: Path) -> bool:
-  return path.name in SKIP_DIRS or path.is_symlink()
+  return (
+    path.name in SKIP_DIRS
+    or path.is_symlink()
+    or _is_ignored_by_mcpignore(path, is_dir=True)
+  )
 
 def _is_denied_name(name: str) -> bool:
   if DENY_NAMES_IGNORECASE:
@@ -254,6 +302,8 @@ def _is_denied_name(name: str) -> bool:
   return name in DENY_NAMES
 
 def _is_denied_file(path: Path) -> bool:
+  if _is_ignored_by_mcpignore(path, is_dir=False):
+    return True
   if _is_denied_name(path.name):
     return True
   if path.suffix.lower() in DENY_EXTS:
@@ -299,6 +349,8 @@ def _walk_files(base: Path):
   if base.is_file():
     yield base
     return
+  if base != ROOT and _is_skipped_dir(base):
+    return
 
   for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
     current = Path(dirpath)
@@ -322,6 +374,8 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
     raise ValueError("path does not exist")
   if not base.is_dir():
     raise ValueError("path is not a directory")
+  if base != ROOT and _is_skipped_dir(base):
+    raise ValueError("path is not allowed")
 
   max_entries = max(1, min(max_entries, 1000))
   entries: list[dict[str, Any]] = []
