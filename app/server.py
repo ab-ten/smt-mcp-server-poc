@@ -23,12 +23,14 @@ MCP_HTTP_PATH = os.environ.get("MCP_HTTP_PATH", "/mcp")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
+  """環境変数の値を真偽値として解釈します。"""
   value = os.environ.get(name)
   if value is None:
     return default
   return value.lower() in ("1", "true", "yes", "on")
 
 def _split_space_or_comma_list(value: str) -> list[str]:
+  """空白またはカンマ区切りの文字列をリストに変換します。"""
   return [x for x in value.replace(",", " ").split() if x]
 
 MCP_AUTH_ENABLED = _env_bool("MCP_AUTH_ENABLED", False)
@@ -61,10 +63,14 @@ MCP_RESOURCE_SERVER_URL = os.environ.get(
 MCP_DUMP_TOKEN = _env_bool("MCP_DUMP_TOKEN", False)
 
 class CognitoTokenVerifier(TokenVerifier):
+  """Cognito アクセストークンを検証する TokenVerifier です。"""
+
   def __init__(self):
+    """JWKS クライアントを初期化します。"""
     self._jwks_client = PyJWKClient(COGNITO_JWKS_URL)
 
   async def verify_token(self, token: str) -> AccessToken | None:
+    """JWT を検証し、MCP 認可に使用するアクセストークン情報を返します。"""
     if MCP_DUMP_TOKEN:
       print("verify_token called", flush=True)
 
@@ -120,6 +126,7 @@ class CognitoTokenVerifier(TokenVerifier):
     )
 
   def _decode_token(self, token: str) -> dict[str, Any]:
+    """JWKS の署名鍵を使用して JWT をデコードします。"""
     signing_key = self._jwks_client.get_signing_key_from_jwt(token).key
     algorithms = JWT_DECODE_ALGORITHMS
     if not algorithms:
@@ -134,6 +141,7 @@ class CognitoTokenVerifier(TokenVerifier):
     )
 
 def _create_auth_settings() -> AuthSettings | None:
+  """Cognito 認証が有効な場合に MCP 認証設定を作成します。"""
   if not MCP_AUTH_ENABLED:
     return None
 
@@ -188,6 +196,7 @@ DEFAULT_ALLOW_EXTS = """
 """
 
 def _split_env_list(value: str) -> set[str]:
+  """カンマ区切りまたは改行区切りの環境変数値を小文字の集合に変換します。"""
   return {x.strip().lower() for x in value.replace("\n", ",").split(",") if x.strip()}
 
 ALLOW_EXTS = _split_env_list(os.environ.get("ALLOW_EXTS", DEFAULT_ALLOW_EXTS))
@@ -221,6 +230,7 @@ ALLOW_NAMES = {
 FALLBACK_ENCODING_EXTS = {".bat", ".cmd"}
 
 def _parts(path: str) -> tuple[str, ...]:
+  """ユーザー指定パスを安全な相対パス部品へ分解します。"""
   normalized = (path or "").replace("\\", "/")
   if normalized.startswith("/"):
     raise ValueError("absolute paths are not allowed")
@@ -231,6 +241,7 @@ def _parts(path: str) -> tuple[str, ...]:
   return parts
 
 def _safe_path(path: str) -> Path:
+  """ワークスペース外へ出ない安全な絶対パスを返します。"""
   cur = ROOT
   for part in _parts(path):
     cur = cur / part
@@ -243,11 +254,13 @@ def _safe_path(path: str) -> Path:
   return resolved
 
 def _rel(path: Path) -> str:
+  """ワークスペースルートからの相対パス文字列を返します。"""
   if path == ROOT:
     return "."
   return path.relative_to(ROOT).as_posix()
 
 def _ancestor_dirs_from_root(path: Path) -> list[Path]:
+  """ワークスペースルートから指定ディレクトリまでの祖先ディレクトリを返します。"""
   if path == ROOT:
     return [ROOT]
 
@@ -259,9 +272,11 @@ def _ancestor_dirs_from_root(path: Path) -> list[Path]:
   return dirs
 
 def _mcpignore_dirs_for(path: Path) -> list[Path]:
+  """指定パスに適用される可能性がある .mcpignore の配置ディレクトリを返します。"""
   return _ancestor_dirs_from_root(path.parent)
 
 def _is_ignored_by_mcpignore(path: Path, is_dir: bool) -> bool:
+  """階層ごとの .mcpignore により指定パスが除外されるか判定します。"""
   if path == ROOT:
     return False
 
@@ -290,6 +305,7 @@ def _is_ignored_by_mcpignore(path: Path, is_dir: bool) -> bool:
   return ignored
 
 def _is_skipped_dir(path: Path) -> bool:
+  """走査対象から除外するディレクトリかどうかを判定します。"""
   return (
     path.name in SKIP_DIRS
     or path.is_symlink()
@@ -297,11 +313,13 @@ def _is_skipped_dir(path: Path) -> bool:
   )
 
 def _is_denied_name(name: str) -> bool:
+  """拒否対象のファイル名に一致するか判定します。"""
   if DENY_NAMES_IGNORECASE:
     return name.casefold() in DENY_NAMES_NORMALIZED
   return name in DENY_NAMES
 
 def _is_denied_file(path: Path) -> bool:
+  """読み取りまたは公開対象から除外するファイルかどうかを判定します。"""
   if _is_ignored_by_mcpignore(path, is_dir=False):
     return True
   if _is_denied_name(path.name):
@@ -313,11 +331,13 @@ def _is_denied_file(path: Path) -> bool:
   return False
 
 def _text_encodings(path: Path) -> tuple[str, ...]:
+  """ファイル拡張子に応じて試行するテキストエンコーディングを返します。"""
   if path.suffix.lower() in FALLBACK_ENCODING_EXTS:
     return ("utf-8", "cp932")
   return ("utf-8",)
 
 def _decode_text(path: Path, data: bytes) -> str:
+  """許可されたエンコーディングでバイト列をテキストへ変換します。"""
   for encoding in _text_encodings(path):
     try:
       return data.decode(encoding)
@@ -326,6 +346,7 @@ def _decode_text(path: Path, data: bytes) -> str:
   raise UnicodeDecodeError("utf-8", data, 0, 1, "file is not valid text")
 
 def _is_probably_text(path: Path, max_bytes: int) -> bool:
+  """ファイルが許可されたサイズ内のテキストとして扱えるか判定します。"""
   if not path.is_file():
     return False
   if _is_denied_file(path):
@@ -343,9 +364,11 @@ def _is_probably_text(path: Path, max_bytes: int) -> bool:
   return True
 
 def _read_text_file(path: Path) -> str:
+  """ファイル全体をテキストとして読み込みます。"""
   return _decode_text(path, path.read_bytes())
 
 def _walk_files(base: Path):
+  """指定パス配下の走査可能なファイルを再帰的に列挙します。"""
   if base.is_file():
     yield base
     return
@@ -368,7 +391,7 @@ def _walk_files(base: Path):
 
 @mcp.tool()
 def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) -> list[dict[str, Any]]:
-  """List files and directories under the workspace. This tool is read-only."""
+  """ワークスペース配下のファイルとディレクトリを一覧表示します。"""
   base = _safe_path(path)
   if not base.exists():
     raise ValueError("path does not exist")
@@ -415,7 +438,7 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
 
 @mcp.tool()
 def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str]:
-  """Find files by shell-style wildcard pattern under the workspace. This tool is read-only."""
+  """シェル形式のワイルドカードでファイルを検索します。"""
   if not pattern:
     raise ValueError("pattern is required")
 
@@ -436,7 +459,7 @@ def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str
 
 @mcp.tool()
 def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str, Any]:
-  """Read a text file from the workspace. This tool is read-only."""
+  """ワークスペース内のテキストファイルを行単位で読み取ります。"""
   file_path = _safe_path(path)
   if not _is_probably_text(file_path, MAX_READ_BYTES):
     raise ValueError("file is not allowed, is too large, or is not supported text")
@@ -470,7 +493,7 @@ def search_text(
   case_sensitive: bool = False,
   max_results: int = 100,
 ) -> list[dict[str, Any]]:
-  """Search text files under the workspace. This tool is read-only."""
+  """ワークスペース内のテキストファイルから文字列または正規表現を検索します。"""
   if not query:
     raise ValueError("query is required")
 
@@ -500,6 +523,7 @@ def search_text(
 
 @mcp.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(request):
+  """ヘルスチェック用の JSON レスポンスを返します。"""
   return JSONResponse({"status": "ok"})
 
 
