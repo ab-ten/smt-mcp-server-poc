@@ -4,7 +4,7 @@ import fnmatch
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pathspec import PathSpec
 from mcp.server.fastmcp import FastMCP
@@ -12,6 +12,8 @@ from starlette.responses import JSONResponse
 
 from auth import auth_settings, token_verifier
 
+
+EntryType = Literal["dir", "file"]
 
 MCP_HTTP_HOST = os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
 MCP_HTTP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8000"))
@@ -226,27 +228,65 @@ def _read_text_file(path: Path) -> str:
   """ファイル全体をテキストとして読み込みます。"""
   return _decode_text(path, path.read_bytes())
 
-def _walk_files(base: Path):
-  """指定パス配下の走査可能なファイルを再帰的に列挙します。"""
+def _entry_type(path: Path) -> EntryType | None:
+  """走査可能なエントリ種別を返します。判定できない場合は None を返します。"""
+  try:
+    if path.is_symlink():
+      return None
+    if path.is_dir():
+      return "dir"
+    if path.is_file():
+      return "file"
+  except OSError:
+    return None
+  return None
+
+def _walk_children(base: Path):
+  """指定ディレクトリ直下の走査可能なエントリを安全に列挙します。"""
+  try:
+    children = [
+      (child, entry_type)
+      for child in base.iterdir()
+      if (entry_type := _entry_type(child)) is not None
+    ]
+  except OSError:
+    return
+
+  yield from sorted(children, key=lambda item: (item[1] != "dir", item[0].name.lower()))
+
+def _can_list_dir(path: Path) -> bool:
+  """指定ディレクトリを列挙できるか確認します。"""
+  try:
+    next(path.iterdir(), None)
+  except OSError:
+    return False
+  return True
+
+def _walk_entries(base: Path):
+  """指定パス配下の走査可能なファイルとディレクトリを再帰的に列挙します。"""
   if base.is_file():
-    yield base
+    yield base, "file"
     return
   if base != ROOT and _is_skipped_dir(base):
     return
 
-  for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
-    current = Path(dirpath)
-
-    dirnames[:] = [
-      name for name in dirnames
-      if not _is_skipped_dir(current / name)
-    ]
-
-    for name in filenames:
-      path = current / name
-      if path.is_symlink():
+  for child, entry_type in _walk_children(base):
+    if entry_type == "dir":
+      if _is_skipped_dir(child):
         continue
+      if not _can_list_dir(child):
+        continue
+      yield child, "dir"
+      yield from _walk_entries(child)
+    elif entry_type == "file":
+      yield child, "file"
+
+def _walk_files(base: Path):
+  """指定パス配下の走査可能なファイルを再帰的に列挙します。"""
+  for path, entry_type in _walk_entries(base):
+    if entry_type == "file":
       yield path
+
 
 @mcp.tool()
 def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) -> list[dict[str, Any]]:
@@ -263,30 +303,34 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
   entries: list[dict[str, Any]] = []
 
   if recursive:
-    for child in _walk_files(base):
+    for child, entry_type in _walk_entries(base):
       if len(entries) >= max_entries:
         break
-      if _is_denied_file(child):
+
+      if entry_type == "file" and _is_denied_file(child):
         continue
-      entries.append({
+
+      entry: dict[str, Any] = {
         "path": _rel(child),
-        "type": "file",
-        "size": child.stat().st_size,
-      })
+        "type": entry_type,
+      }
+
+      if entry_type == "file":
+        entry["size"] = child.stat().st_size
+
+      entries.append(entry)
   else:
-    for child in sorted(base.iterdir(), key=lambda p: p.name.lower()):
+    for child, entry_type in sorted(_walk_children(base), key=lambda item: item[0].name.lower()):
       if len(entries) >= max_entries:
         break
-      if child.is_symlink():
-        continue
-      if child.is_dir():
+      if entry_type == "dir":
         if _is_skipped_dir(child):
           continue
         entries.append({
           "path": _rel(child),
           "type": "dir",
         })
-      elif child.is_file() and not _is_denied_file(child):
+      elif entry_type == "file" and not _is_denied_file(child):
         entries.append({
           "path": _rel(child),
           "type": "file",
