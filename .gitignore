@@ -1,5 +1,5 @@
 /.editorconfig
 /.env
 /bin/tunnel-client
-/app/__pycache__/
+__pycache__/
 .mcpignore
