@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,18 +15,11 @@ from auth import auth_settings, token_verifier
 
 
 EntryType = Literal["dir", "file"]
+PolicyDecision = Literal["ignore", "allow", "fallback"]
 
 MCP_HTTP_HOST = os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
 MCP_HTTP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8000"))
 MCP_HTTP_PATH = os.environ.get("MCP_HTTP_PATH", "/mcp")
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-  """環境変数の値を真偽値として解釈します。"""
-  value = os.environ.get(name)
-  if value is None:
-    return default
-  return value.lower() in ("1", "true", "yes", "on")
 
 
 mcp = FastMCP(
@@ -46,49 +40,73 @@ MAX_SCAN_BYTES = int(os.environ.get("MAX_SCAN_BYTES", "1048576"))
 MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "100"))
 MCP_IGNORE_NAME = ".mcpignore"
 
-DEFAULT_ALLOW_EXTS = """
-.py,.pyi,.rs,.c,.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx,
-.cs,.java,.kt,.kts,.go,.js,.jsx,.ts,.tsx,.mjs,.cjs,
-.el,.lua,.rb,.php,.swift,.m,.mm,
-.md,.txt,.rst,.adoc,
-.json,.jsonc,.yaml,.yml,.toml,.ini,.cfg,.conf,.xml,
-.sql,.sh,.bash,.zsh,.ps1,.bat,.cmd,
-.uplugin,.uproject,.build.cs,.target.cs
-"""
-
-def _split_env_list(value: str) -> set[str]:
-  """カンマ区切りまたは改行区切りの環境変数値を小文字の集合に変換します。"""
-  return {x.strip().lower() for x in value.replace("\n", ",").split(",") if x.strip()}
-
-ALLOW_EXTS = _split_env_list(os.environ.get("ALLOW_EXTS", DEFAULT_ALLOW_EXTS))
-DENY_NAMES_IGNORECASE = _env_bool("DENY_NAMES_IGNORECASE", True)
-
-SKIP_DIRS = {
-  ".git", ".hg", ".svn",
-  "node_modules", ".venv", "venv", "__pycache__",
-  ".mypy_cache", ".pytest_cache", ".ruff_cache",
-  "target", "dist", "build", ".next", ".turbo",
-}
-
-DENY_NAMES = {
-  ".env", ".env.local", ".env.production",
-  ".npmrc", ".pypirc", ".netrc",
-  "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa",
-  "known_hosts", MCP_IGNORE_NAME,
-}
-
-DENY_NAMES_NORMALIZED = {name.casefold() for name in DENY_NAMES}
-
-DENY_EXTS = {
-  ".pem", ".key", ".p12", ".pfx", ".kdbx", ".age",
-  ".sqlite", ".db", ".mdb",
+DEFAULT_ALLOW_EXTS = {
+  ".py", ".pyi", ".rs", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx",
+  ".cs", ".java", ".kt", ".kts", ".go", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+  ".el", ".lua", ".rb", ".php", ".swift", ".m", ".mm",
+  ".md", ".txt", ".rst", ".adoc",
+  ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".xml",
+  ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
+  ".uplugin", ".uproject", ".build.cs", ".target.cs",
 }
 
 ALLOW_NAMES = {
   "Dockerfile", "Makefile", "CMakeLists.txt", "LICENSE",
 }
 
+DEFAULT_IGNORE_DIRS = {
+  ".git", ".hg", ".svn",
+  "node_modules", ".venv", "venv", "__pycache__",
+  ".mypy_cache", ".pytest_cache", ".ruff_cache",
+  "target", "dist", "build", ".next", ".turbo",
+}
+
+HARD_DENY_PATTERNS = (
+  "**/.env",
+  "**/.env.*",
+  "**/.npmrc",
+  "**/.pypirc",
+  "**/.netrc",
+  "**/id_rsa",
+  "**/id_ed25519",
+  "**/id_dsa",
+  "**/id_ecdsa",
+  "**/known_hosts",
+  "**/*.pem",
+  "**/*.key",
+  "**/*.p12",
+  "**/*.pfx",
+  "**/*.kdbx",
+  "**/*.age",
+  "**/*.sqlite",
+  "**/*.db",
+  "**/*.mdb",
+  f"**/{MCP_IGNORE_NAME}",
+)
+
+HARD_DENY_SPEC = PathSpec.from_lines(
+  "gitwildmatch",
+  [pattern.casefold() for pattern in HARD_DENY_PATTERNS],
+)
+DEFAULT_IGNORE_RULES = [
+  f"ignore {name}/"
+  for name in sorted(DEFAULT_IGNORE_DIRS)
+]
+DEFAULT_ALLOW_RULES = [
+  f"allow **/*{ext}"
+  for ext in sorted(DEFAULT_ALLOW_EXTS, key=lambda value: (len(value), value))
+] + [
+  f"allow {name}"
+  for name in sorted(ALLOW_NAMES)
+]
+
 FALLBACK_ENCODING_EXTS = {".bat", ".cmd"}
+
+@dataclass(frozen=True)
+class McpIgnorePolicy:
+  """MCP 公開ポリシーの ignore / allow パターンを表します。"""
+  ignore_patterns: tuple[str, ...]
+  allow_patterns: tuple[str, ...]
 
 def _parts(path: str) -> tuple[str, ...]:
   """ユーザー指定パスを安全な相対パス部品へ分解します。"""
@@ -136,60 +154,148 @@ def _mcpignore_dirs_for(path: Path) -> list[Path]:
   """指定パスに適用される可能性がある .mcpignore の配置ディレクトリを返します。"""
   return _ancestor_dirs_from_root(path.parent)
 
-def _is_ignored_by_mcpignore(path: Path, is_dir: bool) -> bool:
-  """階層ごとの .mcpignore により指定パスが除外されるか判定します。"""
+def _expand_mcpignore_pattern(pattern: str) -> tuple[str, ...]:
+  """ディレクトリパターンを配下のファイルにも明示的に適用します。"""
+  if not pattern.endswith("/"):
+    return (pattern,)
+
+  prefix = "!" if pattern.startswith("!") else ""
+  path_pattern = pattern[1:] if pattern.startswith("!") else pattern
+  return (pattern, f"{prefix}{path_pattern}**")
+
+def _parse_mcpignore_lines(lines: list[str]) -> McpIgnorePolicy:
+  """`.mcpignore` の行を MCP 公開ポリシールールへ変換します。"""
+  ignore_patterns: list[str] = []
+  allow_patterns: list[str] = []
+  for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+      continue
+
+    command, _, rest = stripped.partition(" ")
+    if command == "ignore" and rest.strip():
+      decision: Literal["ignore", "allow"] = "ignore"
+      pattern = rest.strip()
+    elif command == "allow" and rest.strip():
+      decision = "allow"
+      pattern = rest.strip()
+    else:
+      decision = "ignore"
+      pattern = stripped
+
+    expanded_patterns = _expand_mcpignore_pattern(pattern)
+    if decision == "ignore":
+      ignore_patterns.extend(expanded_patterns)
+    else:
+      allow_patterns.extend(expanded_patterns)
+  return McpIgnorePolicy(
+    ignore_patterns=tuple(ignore_patterns),
+    allow_patterns=tuple(allow_patterns),
+  )
+
+def _read_mcpignore_policy(ignore_dir: Path) -> McpIgnorePolicy:
+  """指定ディレクトリの .mcpignore からポリシールールを読み込みます。"""
+  ignore_file = ignore_dir / MCP_IGNORE_NAME
+  if not ignore_file.is_file() or ignore_file.is_symlink():
+    return McpIgnorePolicy(ignore_patterns=(), allow_patterns=())
+  return _parse_mcpignore_lines(ignore_file.read_text(encoding="utf-8").splitlines())
+
+def _merge_mcpignore_policies(policies: list[McpIgnorePolicy]) -> McpIgnorePolicy:
+  """複数の MCP 公開ポリシーを一つの policy として結合します。"""
+  ignore_patterns: list[str] = []
+  allow_patterns: list[str] = []
+  for policy in policies:
+    ignore_patterns.extend(policy.ignore_patterns)
+    allow_patterns.extend(policy.allow_patterns)
+  return McpIgnorePolicy(
+    ignore_patterns=tuple(ignore_patterns),
+    allow_patterns=tuple(allow_patterns),
+  )
+
+def _policy_for_dir(policy_dir: Path) -> McpIgnorePolicy:
+  """指定ディレクトリに存在する MCP 公開ポリシールールを返します。"""
+  policies: list[McpIgnorePolicy] = []
+  if policy_dir == ROOT:
+    policies.append(_parse_mcpignore_lines(DEFAULT_IGNORE_RULES + DEFAULT_ALLOW_RULES))
+  policies.append(_read_mcpignore_policy(policy_dir))
+  return _merge_mcpignore_policies(policies)
+
+def _pathspec_candidates(path: Path, policy_dir: Path, is_dir: bool) -> list[str]:
+  """pathspec に渡す相対パス候補を返します。"""
+  rel = path.relative_to(policy_dir).as_posix()
+  candidates = [rel]
+  if is_dir:
+    candidates.append(f"{rel}/")
+  return candidates
+
+def _mcpignore_decision(policy: McpIgnorePolicy, candidates: list[str]) -> PolicyDecision:
+  """ルール列に対する公開ポリシー判定を返します。"""
+  ignore_spec = PathSpec.from_lines("gitwildmatch", policy.ignore_patterns)
+  if any(ignore_spec.match_file(candidate) for candidate in candidates):
+    return "ignore"
+
+  allow_spec = PathSpec.from_lines("gitwildmatch", policy.allow_patterns)
+  if any(allow_spec.match_file(candidate) for candidate in candidates):
+    return "allow"
+
+  return "fallback"
+
+def _file_policy_decision(path: Path) -> PolicyDecision:
+  """下位から上位へ fallback しながらファイル公開ポリシーを判定します。"""
+  for policy_dir in reversed(_mcpignore_dirs_for(path)):
+    decision = _mcpignore_decision(
+      _policy_for_dir(policy_dir),
+      _pathspec_candidates(path, policy_dir, is_dir=False),
+    )
+    if decision != "fallback":
+      return decision
+  return "ignore"
+
+def _is_hard_denied_path(path: Path, is_dir: bool = False) -> bool:
+  """hard deny の pathspec に一致するかを大小文字を区別せずに判定します。"""
+  candidates = [
+    candidate.casefold()
+    for candidate in _pathspec_candidates(path, ROOT, is_dir)
+  ]
+  return any(HARD_DENY_SPEC.match_file(candidate) for candidate in candidates)
+
+def _is_directory_ignored_by_policy(path: Path) -> bool:
+  """ディレクトリが .mcpignore の ignore ルールに一致するか判定します。"""
   if path == ROOT:
     return False
 
-  ignored = False
-  for ignore_dir in _mcpignore_dirs_for(path):
-    ignore_file = ignore_dir / MCP_IGNORE_NAME
-    if not ignore_file.is_file() or ignore_file.is_symlink():
-      continue
+  for policy_dir in _mcpignore_dirs_for(path):
+    policy = _policy_for_dir(policy_dir)
+    ignore_spec = PathSpec.from_lines("gitwildmatch", policy.ignore_patterns)
+    candidates = _pathspec_candidates(path, policy_dir, True)
+    if any(ignore_spec.match_file(candidate) for candidate in candidates):
+      return True
+  return False
 
-    lines = ignore_file.read_text(encoding="utf-8").splitlines()
-    spec = PathSpec.from_lines("gitwildmatch", lines)
-    rel = path.relative_to(ignore_dir).as_posix()
-    candidates = [rel]
-    if is_dir:
-      candidates.append(f"{rel}/")
+def _has_ignored_ancestor_dir(path: Path) -> bool:
+  """親ディレクトリのいずれかが ignore されているか判定します。"""
+  for directory in _ancestor_dirs_from_root(path.parent)[1:]:
+    if _is_directory_ignored_by_policy(directory):
+      return True
+  return False
 
-    if any(spec.match_file(candidate) for candidate in candidates):
-      ignored = True
-    elif any(
-      pattern.include is False and pattern.match_file(candidate)
-      for pattern in spec.patterns
-      for candidate in candidates
-    ):
-      ignored = False
-
-  return ignored
+def _is_allowed_file(path: Path) -> bool:
+  """MCP ツールで公開可能なファイルか判定します。"""
+  if not path.is_file() or path.is_symlink():
+    return False
+  if _is_hard_denied_path(path):
+    return False
+  if _has_ignored_ancestor_dir(path):
+    return False
+  return _file_policy_decision(path) == "allow"
 
 def _is_skipped_dir(path: Path) -> bool:
   """走査対象から除外するディレクトリかどうかを判定します。"""
   return (
-    path.name in SKIP_DIRS
-    or path.is_symlink()
-    or _is_ignored_by_mcpignore(path, is_dir=True)
+    path.is_symlink()
+    or _is_hard_denied_path(path, is_dir=True)
+    or _is_directory_ignored_by_policy(path)
   )
-
-def _is_denied_name(name: str) -> bool:
-  """拒否対象のファイル名に一致するか判定します。"""
-  if DENY_NAMES_IGNORECASE:
-    return name.casefold() in DENY_NAMES_NORMALIZED
-  return name in DENY_NAMES
-
-def _is_denied_file(path: Path) -> bool:
-  """読み取りまたは公開対象から除外するファイルかどうかを判定します。"""
-  if _is_ignored_by_mcpignore(path, is_dir=False):
-    return True
-  if _is_denied_name(path.name):
-    return True
-  if path.suffix.lower() in DENY_EXTS:
-    return True
-  if path.name not in ALLOW_NAMES and path.suffix.lower() not in ALLOW_EXTS:
-    return True
-  return False
 
 def _text_encodings(path: Path) -> tuple[str, ...]:
   """ファイル拡張子に応じて試行するテキストエンコーディングを返します。"""
@@ -208,9 +314,7 @@ def _decode_text(path: Path, data: bytes) -> str:
 
 def _is_probably_text(path: Path, max_bytes: int) -> bool:
   """ファイルが許可されたサイズ内のテキストとして扱えるか判定します。"""
-  if not path.is_file():
-    return False
-  if _is_denied_file(path):
+  if not _is_allowed_file(path):
     return False
   if path.stat().st_size > max_bytes:
     return False
@@ -307,7 +411,7 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
       if len(entries) >= max_entries:
         break
 
-      if entry_type == "file" and _is_denied_file(child):
+      if entry_type == "file" and not _is_allowed_file(child):
         continue
 
       entry: dict[str, Any] = {
@@ -330,7 +434,7 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
           "path": _rel(child),
           "type": "dir",
         })
-      elif entry_type == "file" and not _is_denied_file(child):
+      elif entry_type == "file" and _is_allowed_file(child):
         entries.append({
           "path": _rel(child),
           "type": "file",
@@ -350,7 +454,7 @@ def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str
   matches: list[str] = []
 
   for file_path in _walk_files(base):
-    if _is_denied_file(file_path):
+    if not _is_allowed_file(file_path):
       continue
     rel = _rel(file_path)
     if fnmatch.fnmatch(file_path.name, pattern) or fnmatch.fnmatch(rel, pattern):
