@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import fnmatch
+import io
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -343,6 +345,58 @@ class McpIgnorePolicyTests(unittest.TestCase):
     self.assertEqual([], server.search_text("needle"))
     with self.assertRaises(ValueError):
       server.read_file("unknown.blob")
+
+
+class CommandLineListTests(unittest.TestCase):
+  def setUp(self):
+    self.tmp = tempfile.TemporaryDirectory()
+    self.root = Path(self.tmp.name)
+    self.old_root = server.ROOT
+    server.ROOT = self.root
+
+  def tearDown(self):
+    server.ROOT = self.old_root
+    self.tmp.cleanup()
+
+  def _run_main(self, *args: str) -> tuple[int, str, str]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+      code = server._main(list(args))
+    return code, stdout.getvalue(), stderr.getvalue()
+
+  def test_list_outputs_only_public_paths(self):
+    (self.root / "README.md").write_text("docs\n", encoding="utf-8")
+    (self.root / "app").mkdir()
+    (self.root / "app" / "server.py").write_text("print('ok')\n", encoding="utf-8")
+    (self.root / ".mcpignore").write_text("ignore **/*.md\n", encoding="utf-8")
+    (self.root / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    (self.root / "unknown.blob").write_text("needle\n", encoding="utf-8")
+
+    code, stdout, stderr = self._run_main("--list")
+
+    self.assertEqual(0, code)
+    self.assertEqual("", stderr)
+    self.assertEqual(["app/", "app/server.py"], stdout.splitlines())
+
+  def test_list_uses_list_files_without_entry_limit(self):
+    for index in range(server.LIST_FILES_MAX_ENTRIES + 1):
+      (self.root / f"file-{index:04}.txt").write_text("ok\n", encoding="utf-8")
+
+    code, stdout, stderr = self._run_main("--list")
+
+    self.assertEqual(0, code)
+    self.assertEqual("", stderr)
+    self.assertEqual(server.LIST_FILES_MAX_ENTRIES + 1, len(stdout.splitlines()))
+
+  def test_list_returns_error_when_root_is_missing(self):
+    server.ROOT = self.root / "missing"
+
+    code, stdout, stderr = self._run_main("--list")
+
+    self.assertEqual(1, code)
+    self.assertEqual("", stdout)
+    self.assertIn("MCP_ROOT does not exist", stderr)
 
 
 if __name__ == "__main__":

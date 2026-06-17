@@ -11,5 +11,9 @@ if exist "%HOME%\smt-mcp-server-poc.env" (
   set OPTIONS=%OPTIONS% --env-file "%~dp0\.env"
 )
 
+if "%~1"=="--list" (
+  docker run --rm -it --init %OPTIONS% -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m --entrypoint python smt-local-files-mcp /app/server.py --list
+  exit /b %ERRORLEVEL%
+)
 
 docker run --rm -it --init %OPTIONS% -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m %* smt-local-files-mcp

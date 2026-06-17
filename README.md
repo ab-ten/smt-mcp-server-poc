@@ -152,6 +152,22 @@ docker run --rm -it --init -v "%~dp0\app:/app:ro" --env-file "%HOME%\smt-mcp-ser
 
 `app/entrypoint.sh` は MCP サーバーを起動後、`http://127.0.0.1:${MCP_HTTP_PORT}/healthz` で起動確認を行います。起動確認に成功すると、`tunnel-client run` に `http://127.0.0.1:${MCP_HTTP_PORT}${MCP_HTTP_PATH}` を MCP サーバー URL として渡します。
 
+### `.mcpignore` 設定の確認
+
+`.mcpignore` と既定ポリシーを適用した後に MCP から公開されるパスは、`--list` で確認できます。出力はヘッダーなしで、公開対象の相対パスを 1 行ずつ表示します。ディレクトリは末尾に `/` を付けて表示します。
+
+Windows では次のコマンドを実行します。
+
+```cmd
+run.cmd --list
+```
+
+Docker で直接実行する場合は、entrypoint を `python` に差し替えて `server.py` に `--list` を渡します。
+
+```cmd
+docker run --rm -it --init -v "%~dp0\app:/app:ro" -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m --entrypoint python smt-local-files-mcp /app/server.py --list
+```
+
 ## `.mcpignore` による公開ポリシー
 
 MCP サーバーから公開するファイルは、既定の allow policy とワークスペース内の `.mcpignore` で制御されます。`.mcpignore` は `gitwildmatch` 形式の pathspec として解釈され、配置されたディレクトリ以下に適用されます。
