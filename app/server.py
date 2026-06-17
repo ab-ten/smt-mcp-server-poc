@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import fnmatch
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -38,6 +40,7 @@ ROOT = Path(os.environ.get("MCP_ROOT", "/workspace")).resolve()
 MAX_READ_BYTES = int(os.environ.get("MAX_READ_BYTES", "262144"))
 MAX_SCAN_BYTES = int(os.environ.get("MAX_SCAN_BYTES", "1048576"))
 MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "100"))
+LIST_FILES_MAX_ENTRIES = 1000
 MCP_IGNORE_NAME = ".mcpignore"
 
 DEFAULT_ALLOW_EXTS = {
@@ -391,6 +394,19 @@ def _walk_files(base: Path):
     if entry_type == "file":
       yield path
 
+def _list_public_paths() -> list[str]:
+  """MCP ツールで公開されるパスを一覧化します。"""
+  if not ROOT.exists():
+    raise ValueError("MCP_ROOT does not exist")
+  if not ROOT.is_dir():
+    raise ValueError("MCP_ROOT is not a directory")
+
+  entries = list_files(recursive=True, max_entries=sys.maxsize)
+  return [
+    f"{entry['path']}/" if entry["type"] == "dir" else str(entry["path"])
+    for entry in entries
+  ]
+
 
 @mcp.tool()
 def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) -> list[dict[str, Any]]:
@@ -403,7 +419,7 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
   if base != ROOT and _is_skipped_dir(base):
     raise ValueError("path is not allowed")
 
-  max_entries = max(1, min(max_entries, 1000))
+  max_entries = max(1, min(max_entries, LIST_FILES_MAX_ENTRIES))
   entries: list[dict[str, Any]] = []
 
   if recursive:
@@ -534,5 +550,37 @@ async def healthz(request):
   return JSONResponse({"status": "ok"})
 
 
-if __name__ == "__main__":
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+  """コマンドライン引数を解析します。"""
+  parser = argparse.ArgumentParser(description="Run the local files MCP server.")
+  parser.add_argument(
+    "--list",
+    action="store_true",
+    help="list paths exposed by the MCP policy and exit",
+  )
+  return parser.parse_args(argv)
+
+def _main(argv: list[str]) -> int:
+  """CLI 実行時の処理を行います。"""
+  global LIST_FILES_MAX_ENTRIES
+
+  args = _parse_args(argv)
+  if args.list:
+    previous_list_files_max_entries = LIST_FILES_MAX_ENTRIES
+    try:
+      LIST_FILES_MAX_ENTRIES = sys.maxsize
+      for path in _list_public_paths():
+        print(path)
+    except Exception as exc:
+      print(f"error: {exc}", file=sys.stderr)
+      return 1
+    finally:
+      LIST_FILES_MAX_ENTRIES = previous_list_files_max_entries
+    return 0
+
   mcp.run(transport="streamable-http")
+  return 0
+
+
+if __name__ == "__main__":
+  raise SystemExit(_main(sys.argv[1:]))
