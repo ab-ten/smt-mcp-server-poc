@@ -11,9 +11,18 @@ from typing import Any, Literal
 
 from pathspec import PathSpec
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from starlette.responses import JSONResponse
 
 from auth import auth_settings, token_verifier
+
+
+READ_ONLY_LOCAL_TOOL_ANNOTATIONS = ToolAnnotations(
+  readOnlyHint=True,
+  destructiveHint=False,
+  idempotentHint=True,
+  openWorldHint=False,
+)
 
 
 EntryType = Literal["dir", "file"]
@@ -408,7 +417,7 @@ def _list_public_paths() -> list[str]:
   ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) -> list[dict[str, Any]]:
   """ワークスペース配下のファイルとディレクトリを一覧表示します。"""
   base = _safe_path(path)
@@ -459,7 +468,7 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
 
   return entries
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str]:
   """シェル形式のワイルドカードでファイルを検索します。"""
   if not pattern:
@@ -480,7 +489,7 @@ def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str
 
   return matches
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str, Any]:
   """ワークスペース内のテキストファイルを行単位で読み取ります。"""
   file_path = _safe_path(path)
@@ -508,7 +517,7 @@ def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str,
     "text": "\n".join(selected),
   }
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def search_text(
   query: str,
   path: str = "",
