@@ -9,6 +9,7 @@ export HOME="${HOME:-/tmp}"
 export MCP_HTTP_HOST="${MCP_HTTP_HOST:-127.0.0.1}"
 export MCP_HTTP_PORT="${MCP_HTTP_PORT:-8000}"
 export MCP_HTTP_PATH="${MCP_HTTP_PATH:-/mcp}"
+export TUNNEL_LOG_LEVEL="${TUNNEL_LOG_LEVEL:-warn}"
 
 mkdir -p "$HOME/.config"
 
@@ -52,7 +53,8 @@ PY
 tunnel-client run \
   --control-plane.tunnel-id "$TUNNEL_ID" \
   --control-plane.api-key "env:CONTROL_PLANE_API_KEY" \
-  --mcp.server-url "http://127.0.0.1:${MCP_HTTP_PORT}${MCP_HTTP_PATH}" &
+  --mcp.server-url "http://127.0.0.1:${MCP_HTTP_PORT}${MCP_HTTP_PATH}" \
+  --log.level "$TUNNEL_LOG_LEVEL" --log.format=struct-text &
 tunnel_pid="$!"
 
 wait "$tunnel_pid"
