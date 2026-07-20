@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pathspec import PathSpec
-from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from starlette.responses import JSONResponse
 
 from auth import auth_settings, token_verifier
+from logmcp import AccessLogFastMCP
 
 
 READ_ONLY_LOCAL_TOOL_ANNOTATIONS = ToolAnnotations(
@@ -33,7 +33,7 @@ MCP_HTTP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8000"))
 MCP_HTTP_PATH = os.environ.get("MCP_HTTP_PATH", "/mcp")
 
 
-mcp = FastMCP(
+mcp = AccessLogFastMCP(
   "local-files-readonly",
   host=MCP_HTTP_HOST,
   port=MCP_HTTP_PORT,
