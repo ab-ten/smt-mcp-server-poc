@@ -15,6 +15,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 - シンボリックリンク、親ディレクトリ参照、絶対パスの拒否
 - 秘密情報やバイナリに該当しやすいパスの hard deny
 - `.mcpignore` による MCP 公開対象の allow / ignore 制御
+- MCP ツール呼び出しの構造化アクセスログ
 
 ## ディレクトリ構成
 
@@ -27,6 +28,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 ├── app
 │   ├── auth.py
 │   ├── entrypoint.sh
+│   ├── logmcp.py
 │   └── server.py
 └── bin
     └── tunnel-client （別途ダウンロードしてください）
@@ -35,6 +37,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 | パス | 説明 |
 | --- | --- |
 | `app/auth.py` | Cognito 認証の設定とアクセストークン検証を定義します。 |
+| `app/logmcp.py` | MCP ツール呼び出しのアクセスログ出力とログ値の秘匿・制限を定義します。 |
 | `app/server.py` | MCP サーバー本体です。読み取り専用のファイル操作ツールを定義します。 |
 | `app/entrypoint.sh` | MCP サーバーの起動、ヘルスチェック、`tunnel-client` の実行を行うコンテナ起動スクリプトです。 |
 | `bin/tunnel-client` | Secure Tunneling 接続に使用する実行ファイルです。 |
@@ -93,6 +96,7 @@ docker build -t smt-local-files-mcp .
 | `MCP_HTTP_HOST` | いいえ | MCP サーバーの待ち受けホストです。既定値は `127.0.0.1` です。 |
 | `MCP_HTTP_PORT` | いいえ | MCP サーバーの待ち受けポートです。既定値は `8000` です。 |
 | `MCP_HTTP_PATH` | いいえ | MCP サーバーの streamable HTTP パスです。既定値は `/mcp` です。 |
+| `TUNNEL_LOG_LEVEL` | いいえ | `tunnel-client` のログレベルです。既定値は `warn` です。 |
 | `MAX_READ_BYTES` | いいえ | `read_file` で読み取り可能な最大ファイルサイズです。既定値は `262144` です。 |
 | `MAX_SCAN_BYTES` | いいえ | `search_text` で走査可能な最大ファイルサイズです。既定値は `1048576` です。 |
 | `MAX_RESULTS` | いいえ | 検索系ツールの最大結果件数です。既定値は `100` です。 |
@@ -151,6 +155,10 @@ docker run --rm -it --init -v "%~dp0\app:/app:ro" --env-file "%HOME%\smt-mcp-ser
 実際の `run.cmd` では、スクリプトの配置場所に基づいて `app` ディレクトリをマウントします。また、追加の Docker オプションは `run.cmd` の引数として渡せます。
 
 `app/entrypoint.sh` は MCP サーバーを起動後、`http://127.0.0.1:${MCP_HTTP_PORT}/healthz` で起動確認を行います。起動確認に成功すると、`tunnel-client run` に `http://127.0.0.1:${MCP_HTTP_PORT}${MCP_HTTP_PATH}` を MCP サーバー URL として渡します。
+
+`tunnel-client` のログは `struct-text` 形式で出力されます。ログレベルは `TUNNEL_LOG_LEVEL` で指定できます。
+
+MCP ツール呼び出しごとに、`mcp.access` ロガーから JSON 形式のアクセスログが出力されます。ログにはツール名、リクエスト ID、MCP クライアント ID、引数、処理結果、処理時間が含まれます。認証済みの呼び出しでは OAuth クライアント ID、エラー時には例外クラス名も記録されます。ツールの戻り値自体は記録されず、戻り値の型名のみが記録されます。
 
 ### `.mcpignore` 設定の確認
 
@@ -271,6 +279,8 @@ UTF-8 テキストファイル内の文字列を検索します。`.cmd` / `.bat
 - `.git`、`node_modules`、仮想環境、ビルド出力などは default ignore policy により非公開になります。
 - UTF-8 としてデコードできないファイル、NUL バイトを含むファイル、サイズ上限を超えるファイルは読み取られません。ただし、`.cmd` / `.bat` ファイルは CP932 での読み込みも試行されます。
 - Cognito 認証を有効化する場合は、`MCP_RESOURCE_SERVER_URL` に外部クライアントから到達可能な公開 URL を設定してください。
+- アクセスログの引数に含まれる `authorization`、`access_token`、`api_key`、`apikey`、`password`、`secret`、`token` の値は、キー名の大文字・小文字を区別せず秘匿されます。
+- アクセスログ内の文字列は 500 文字、配列とタプルは 50 件を超える部分が省略されます。
 
 ## Secure Tunneling 側の準備
 
