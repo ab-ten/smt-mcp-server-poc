@@ -2,7 +2,8 @@
 
 ローカルワークスペース内のテキストファイルを読み取り専用で参照するための MCP サーバー PoC です。
 
-Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で起動し、`tunnel-client` を通じて Secure Tunneling のトンネルに接続します。公開される操作はファイル一覧、ファイル検索、ファイル読み取り、テキスト検索に限定されています。
+Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で起動し、`tunnel-client` を通じて Secure Tunneling のトンネルに接続します。
+公開される操作はワークスペースのファイル一覧・検索・読み取り・テキスト検索と、任意設定の共有 workflow ファイルの読み取りに限定されています。
 
 ## 主な機能
 
@@ -12,6 +13,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 - UTF-8 テキストファイルの行単位読み取り
 - UTF-8 テキストファイル内の文字列検索
 - `.cmd` / `.bat` ファイルの CP932 フォールバック読み取り
+- 任意設定の共有 workflow ディレクトリからのテキストファイル読み取り
 - シンボリックリンク、親ディレクトリ参照、絶対パスの拒否
 - 秘密情報やバイナリに該当しやすいパスの hard deny
 - `.mcpignore` による MCP 公開対象の allow / ignore 制御
@@ -24,6 +26,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 ├── Dockerfile
 ├── build.cmd
 ├── run.cmd
+├── env_local.cmd.sample
 ├── requirements.txt
 ├── app
 │   ├── auth.py
@@ -44,6 +47,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 | `Dockerfile` | Python 3.12 slim ベースのコンテナイメージを定義します。 |
 | `build.cmd` | Windows 環境向けの Docker イメージビルド用スクリプトです。 |
 | `run.cmd` | Windows 環境向けの Docker コンテナ起動用スクリプトです。 |
+| `env_local.cmd.sample` | ローカル環境固有の設定例です。共有 workflow ディレクトリを使用する場合は `env_local.cmd` としてコピーして設定します。 |
 | `requirements.txt` | Python 依存関係を定義します。 |
 
 ## 前提条件
@@ -138,6 +142,71 @@ JWT_DECODE_ALGORITHMS=RS256
 MCP_RESOURCE_SERVER_URL=https://your-public-mcp-endpoint.example.com
 ```
 
+### 4. 共有 workflow ディレクトリの設定（任意）
+
+プロジェクトごとのワークスペースとは別に、複数のプロジェクトから共通して参照する workflow や instruction を公開できます。
+
+使用する場合は `env_local.cmd.sample` を `env_local.cmd` としてコピーし、ホスト側のディレクトリを `WORKFLOW_PATH` に設定してください。
+
+```cmd
+set "WORKFLOW_PATH=C:\Projects\chatgpt-workflows"
+```
+
+env_local.cmd が存在し、WORKFLOW_PATH が設定されている場合、run.cmd はそのディレクトリをコンテナ内の /workflow に読み取り専用で bind mount します。
+
+env_local.cmd はローカル環境固有のパスを含むため、リポジトリへコミットしないでください。
+
+#### workflow 例
+
+作者は `highlight_scene_image.md` を workflow に設置しています。
+この workflow は Phase A/B/C からなり、このスレッドでの会話を題材にしたハイライトシーン画像を段階的に作成します。
+
+* **Phase A — Scene Design**
+  現在の会話内容や日付・服装カテゴリをもとに、本番画像の場所、行動、構図、季節感、視覚的焦点などを Scene Brief として設計します。この Phase では画像は生成しません。
+
+* **Phase B — Character Consistency Sheet**
+  Phase A の Scene Brief と canonical identity reference をもとに、今回のシーンで使用する人物デザインを決定し、同じ人物・同じ衣装の6ビューを配置した character consistency sheet を1枚生成します。
+
+* **Phase C — Final Highlight Image**
+  Phase A の Scene Brief と Phase B の character consistency sheet を参照し、会話内容を背景や小物にも自然に取り入れた最終的なハイライトシーン画像を1枚生成します。
+
+各 Phase は同じチャット内で順番に実行します。例えば次のように依頼します。
+
+```text
+workflow highlight_scene_image.md の phase A を実行してください。
+```
+
+Phase A の結果を確認した後、
+
+```text
+workflow highlight_scene_image.md の phase B に進んでください。
+```
+
+最後に、
+
+```text
+workflow highlight_scene_image.md の phase C を実行してください。
+```
+
+と依頼します。
+
+期待される結果は次のとおりです。
+
+* Phase A: 本番画像の設計情報である Scene Brief
+* Phase B: 今回の人物・衣装を固定する character consistency sheet 1枚
+* Phase C: 会話のハイライトを表現した最終画像 1枚
+
+通常は workflow 名を指定するだけで `read_workflow` が選択されます。
+うまく参照されない場合は、使用する MCP サーバーを ChatGPT に登録したときのプラグイン名と tool を明示して、例えば次のように依頼してください。
+
+```text
+home-mcp-service の read_workflow を使用して
+highlight_scene_image.md を読み、phase A を実行してください。
+```
+
+workflow の内容は `read_workflow` を通じて参照されるため、プロジェクトごとのワークスペースとは独立して、同じ workflow を複数のプロジェクトやチャットから再利用できます。
+
+
 ## 実行方法
 
 Windows では次のコマンドを実行します。
@@ -146,10 +215,18 @@ Windows では次のコマンドを実行します。
 run.cmd
 ```
 
-`run.cmd` は、現在のディレクトリを `/workspace` に読み取り専用でマウントし、`app` ディレクトリを `/app` に読み取り専用でマウントします。また、`--init` を指定し、`/tmp` を tmpfs として用意します。
+`run.cmd` は、現在のディレクトリを `/workspace` に読み取り専用でマウントし、`app` ディレクトリを `/app` に読み取り専用でマウントします。
+
+さらに `env_local.cmd` の `WORKFLOW_PATH` が設定されている場合は、そのディレクトリを `/workflow` に読み取り専用で bind mount します。
 
 ```cmd
 docker run --rm -it --init -v "%~dp0\app:/app:ro" --env-file "%HOME%\smt-mcp-server-poc.env" -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m smt-local-files-mcp
+```
+
+workflow を有効にした場合は、さらに次のオプションが追加されます。
+
+```cmd
+--mount "type=bind,src=%WORKFLOW_PATH%,dst=/workflow,readonly"
 ```
 
 実際の `run.cmd` では、スクリプトの配置場所に基づいて `app` ディレクトリをマウントします。また、追加の Docker オプションは `run.cmd` の引数として渡せます。
@@ -176,9 +253,12 @@ Docker で直接実行する場合は、entrypoint を `python` に差し替え�
 docker run --rm -it --init -v "%~dp0\app:/app:ro" -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m --entrypoint python smt-local-files-mcp /app/server.py --list
 ```
 
+ワークフローディレクトリのアクセス設定確認は、ワークフローディレクトリでこのプロジェクトの `run.cmd` を `--list` オプションを付けて起動すると、アクセス可能なファイルがリストアップされます。
+
 ## `.mcpignore` による公開ポリシー
 
-MCP サーバーから公開するファイルは、既定の allow policy とワークスペース内の `.mcpignore` で制御されます。`.mcpignore` は `gitwildmatch` 形式の pathspec として解釈され、配置されたディレクトリ以下に適用されます。
+MCP サーバーから公開するファイルは、各ファイルルートごとに既定の allow policy と `.mcpignore` で制御されます。
+`.mcpignore` は `gitwildmatch` 形式の pathspec として解釈され、配置されたディレクトリ以下に適用されます。
 
 各行では、次の明示構文を使用できます。接頭辞のない行は後方互換のため `ignore` として扱われます。
 
@@ -255,6 +335,20 @@ UTF-8 テキストファイルを行単位で読み取ります。`.cmd` / `.bat
 - `start_line`: 読み取り開始行です。既定値は `1` です。
 - `max_lines`: 読み取り最大行数です。1 から 2000 の範囲に丸められます。
 
+### `read_workflow`
+
+共有 workflow ディレクトリ内のテキストファイルを行単位で読み取ります。
+
+プロジェクト固有のファイルには `read_file`、複数プロジェクトで再利用する workflow や instruction には `read_workflow` を使用します。
+
+ホスト側のディレクトリは `env_local.cmd` の `WORKFLOW_PATH` で指定し、コンテナ内では `/workflow` として参照されます。
+
+主な引数:
+
+- `path`: workflow ディレクトリからの相対パスです。
+- `start_line`: 読み取り開始行です。既定値は `1` です。
+- `max_lines`: 読み取り最大行数です。1 から 2000 の範囲に丸められます。
+
 ### `search_text`
 
 UTF-8 テキストファイル内の文字列を検索します。`.cmd` / `.bat` ファイルは、UTF-8 として読み込めない場合に CP932 として読み込みます。
@@ -270,6 +364,7 @@ UTF-8 テキストファイル内の文字列を検索します。`.cmd` / `.bat
 ## セキュリティ制限
 
 このサーバーは読み取り専用として設計されています。次の制限により、意図しないファイル参照を抑制します。
+これらのファイル公開制限は、通常の `/workspace` と共有 workflow の `/workflow` の双方に適用されます。それぞれのルートは独立して評価され、一方の `.mcpignore` や相対パス解決が他方へまたがることはありません。
 
 - 絶対パスは許可されません。
 - `..` による親ディレクトリ参照は許可されません。
