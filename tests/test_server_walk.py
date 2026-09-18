@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
 import io
 import sys
 import tempfile
@@ -17,93 +16,6 @@ auth_module = types.ModuleType("auth")
 auth_module.auth_settings = None
 auth_module.token_verifier = None
 sys.modules["auth"] = auth_module
-
-pathspec_module = types.ModuleType("pathspec")
-
-class PathSpec:
-  def __init__(self, patterns: list[str] | None = None):
-    self.patterns = patterns or []
-
-  @classmethod
-  def from_lines(cls, _pattern_factory: str, lines: list[str]):
-    return cls([line.strip() for line in lines if line.strip()])
-
-  def match_file(self, path: str) -> bool:
-    normalized = path.replace("\\", "/")
-    path_without_slash = normalized.rstrip("/")
-    basename = Path(path_without_slash).name
-
-    matched = False
-    for pattern in self.patterns:
-      include = not pattern.startswith("!")
-      normalized_pattern = pattern[1:] if pattern.startswith("!") else pattern
-      if self._match_pattern(normalized_pattern, normalized, path_without_slash, basename):
-        matched = include
-    return matched
-
-  def _match_pattern(
-    self,
-    pattern: str,
-    path: str,
-    path_without_slash: str,
-    basename: str,
-  ) -> bool:
-    if pattern.endswith("/"):
-      prefix = pattern.rstrip("/")
-      return path_without_slash == prefix or path_without_slash.startswith(f"{prefix}/")
-
-    if pattern.startswith("**/"):
-      rest = pattern[3:]
-      return (
-        fnmatch.fnmatchcase(path_without_slash, pattern)
-        or fnmatch.fnmatchcase(path_without_slash, rest)
-        or fnmatch.fnmatchcase(basename, rest)
-      )
-
-    if "/" not in pattern:
-      return fnmatch.fnmatchcase(basename, pattern)
-
-    return fnmatch.fnmatchcase(path_without_slash, pattern)
-
-pathspec_module.PathSpec = PathSpec
-sys.modules["pathspec"] = pathspec_module
-
-mcp_module = types.ModuleType("mcp")
-mcp_server_module = types.ModuleType("mcp.server")
-mcp_fastmcp_module = types.ModuleType("mcp.server.fastmcp")
-
-class FastMCP:
-  def __init__(self, *_args, **_kwargs):
-    pass
-
-  def tool(self):
-    def decorator(func):
-      return func
-    return decorator
-
-  def custom_route(self, *_args, **_kwargs):
-    def decorator(func):
-      return func
-    return decorator
-
-  def run(self, *_args, **_kwargs):
-    pass
-
-mcp_fastmcp_module.FastMCP = FastMCP
-sys.modules["mcp"] = mcp_module
-sys.modules["mcp.server"] = mcp_server_module
-sys.modules["mcp.server.fastmcp"] = mcp_fastmcp_module
-
-starlette_module = types.ModuleType("starlette")
-starlette_responses_module = types.ModuleType("starlette.responses")
-
-class JSONResponse:
-  def __init__(self, content):
-    self.content = content
-
-starlette_responses_module.JSONResponse = JSONResponse
-sys.modules["starlette"] = starlette_module
-sys.modules["starlette.responses"] = starlette_responses_module
 
 import server  # noqa: E402
 
