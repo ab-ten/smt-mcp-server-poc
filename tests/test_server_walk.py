@@ -351,6 +351,38 @@ class CommandLineListTests(unittest.TestCase):
     self.assertEqual("", stdout)
     self.assertIn("MCP_ROOT does not exist", stderr)
 
+class WorkflowToolTests(unittest.TestCase):
+  def setUp(self):
+    self.workspace_tmp = tempfile.TemporaryDirectory()
+    self.workflow_tmp = tempfile.TemporaryDirectory()
+
+    self.workspace_path = Path(self.workspace_tmp.name)
+    self.workflow_path = Path(self.workflow_tmp.name)
+
+    self.old_workspace_root = server.WORKSPACE_ROOT
+    self.old_workflow_root = server.WORKFLOW_ROOT
+
+    server.WORKSPACE_ROOT = server.FileRoot(path=self.workspace_path)
+    server.WORKFLOW_ROOT = server.FileRoot(path=self.workflow_path)
+
+  def tearDown(self):
+    server.WORKSPACE_ROOT = self.old_workspace_root
+    server.WORKFLOW_ROOT = self.old_workflow_root
+
+    self.workflow_tmp.cleanup()
+    self.workspace_tmp.cleanup()
+
+  def test_read_file_and_read_workflow_use_separate_roots(self):
+    (self.workspace_path / "shared.md").write_text("workspace\n", encoding="utf-8")
+    (self.workflow_path / "shared.md").write_text("workflow\n", encoding="utf-8")
+
+    self.assertEqual("workspace", server.read_file("shared.md")["text"])
+    self.assertEqual("workflow", server.read_workflow("shared.md")["text"])
+
+  def test_read_workflow_rejects_parent_traversal(self):
+    with self.assertRaisesRegex(ValueError, "parent-directory traversal is not allowed"):
+      server.read_workflow("../secret.md")
+
 
 if __name__ == "__main__":
   unittest.main()

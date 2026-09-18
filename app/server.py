@@ -123,6 +123,10 @@ WORKSPACE_ROOT = FileRoot(
   path=Path(os.environ.get("MCP_ROOT", "/workspace")).resolve(),
 )
 
+WORKFLOW_ROOT = FileRoot(
+  path=Path("/workflow").resolve(),
+)
+
 
 @dataclass(frozen=True)
 class McpIgnorePolicy:
@@ -142,7 +146,7 @@ def _parts(path: str) -> tuple[str, ...]:
   return parts
 
 def _safe_path(file_root: FileRoot, path: str) -> Path:
-  """ワークスペース外へ出ない安全な絶対パスを返します。"""
+  """指定ルート外へ出ない安全な絶対パスを返します。"""
   cur = file_root.path
   for part in _parts(path):
     cur = cur / part
@@ -151,17 +155,17 @@ def _safe_path(file_root: FileRoot, path: str) -> Path:
 
   resolved = cur.resolve(strict=False)
   if resolved != file_root.path and file_root.path not in resolved.parents:
-    raise ValueError("path escapes workspace")
+    raise ValueError("path escapes file root")
   return resolved
 
 def _rel(file_root: FileRoot, path: Path) -> str:
-  """ワークスペースルートからの相対パス文字列を返します。"""
+  """指定ルートからの相対パス文字列を返します。"""
   if path == file_root.path:
     return "."
   return path.relative_to(file_root.path).as_posix()
 
 def _ancestor_dirs_from_root(file_root: FileRoot, path: Path) -> list[Path]:
-  """ワークスペースルートから指定ディレクトリまでの祖先ディレクトリを返します。"""
+  """指定ルートから指定ディレクトリまでの祖先ディレクトリを返します。"""
   if path == file_root.path:
     return [file_root.path]
 
@@ -553,6 +557,19 @@ def _read_file(
     "end_line": end_line,
     "text": "\n".join(selected),
   }
+
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
+def read_workflow(
+  path: str,
+  start_line: int = 1,
+  max_lines: int = 400,
+) -> dict[str, Any]:
+  """共有 workflow ディレクトリ内のテキストファイルを読み取ります。
+
+  現在のプロジェクトファイルではなく、再利用可能な workflow や
+  instruction を参照する場合に使用します。
+  """
+  return _read_file(WORKFLOW_ROOT, path, start_line, max_lines)
 
 @mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def search_text(
