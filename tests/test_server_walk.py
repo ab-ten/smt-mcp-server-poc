@@ -24,8 +24,8 @@ class WalkEntriesPermissionTests(unittest.TestCase):
   def setUp(self):
     self.tmp = tempfile.TemporaryDirectory()
     self.root = Path(self.tmp.name)
-    self.old_root = server.ROOT
-    server.ROOT = self.root
+    self.old_root = server.WORKSPACE_ROOT
+    server.WORKSPACE_ROOT = server.FileRoot(path=self.root)
 
     (self.root / "readable").mkdir()
     (self.root / "readable" / "match.txt").write_text("needle\n", encoding="utf-8")
@@ -34,7 +34,7 @@ class WalkEntriesPermissionTests(unittest.TestCase):
     (self.root / "denied" / "hidden.txt").write_text("needle\n", encoding="utf-8")
 
   def tearDown(self):
-    server.ROOT = self.old_root
+    server.WORKSPACE_ROOT = self.old_root
     self.tmp.cleanup()
 
   def _deny_iterdir(self, denied: Path):
@@ -80,11 +80,11 @@ class McpIgnorePolicyTests(unittest.TestCase):
   def setUp(self):
     self.tmp = tempfile.TemporaryDirectory()
     self.root = Path(self.tmp.name)
-    self.old_root = server.ROOT
-    server.ROOT = self.root
+    self.old_root = server.WORKSPACE_ROOT
+    server.WORKSPACE_ROOT = server.FileRoot(path=self.root)
 
   def tearDown(self):
-    server.ROOT = self.old_root
+    server.WORKSPACE_ROOT = self.old_root
     self.tmp.cleanup()
 
   def _paths(self, recursive: bool = True) -> set[str]:
@@ -259,15 +259,56 @@ class McpIgnorePolicyTests(unittest.TestCase):
       server.read_file("unknown.blob")
 
 
+class FileRootIsolationTests(unittest.TestCase):
+  def test_internal_operations_use_the_supplied_root(self):
+    with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+      first_path = Path(first_tmp)
+      second_path = Path(second_tmp)
+      first_root = server.FileRoot(path=first_path)
+      second_root = server.FileRoot(path=second_path)
+
+      (first_path / "first.txt").write_text("first\n", encoding="utf-8")
+      (second_path / "second.txt").write_text("second\n", encoding="utf-8")
+
+      first_entries = server._list_files(first_root, recursive=True)
+      second_entries = server._list_files(second_root, recursive=True)
+
+      self.assertEqual(["first.txt"], [entry["path"] for entry in first_entries])
+      self.assertEqual(["second.txt"], [entry["path"] for entry in second_entries])
+      self.assertEqual(["first.txt"], server._find_files(first_root, "*.txt"))
+      self.assertEqual(["second.txt"], server._find_files(second_root, "*.txt"))
+      self.assertEqual("first", server._read_file(first_root, "first.txt")["text"])
+      self.assertEqual("second", server._read_file(second_root, "second.txt")["text"])
+      self.assertEqual("first.txt", server._search_text(first_root, "first")[0]["path"])
+      self.assertEqual("second.txt", server._search_text(second_root, "second")[0]["path"])
+
+  def test_mcpignore_policy_does_not_leak_between_roots(self):
+    with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+      first_path = Path(first_tmp)
+      second_path = Path(second_tmp)
+      first_root = server.FileRoot(path=first_path)
+      second_root = server.FileRoot(path=second_path)
+
+      (first_path / ".mcpignore").write_text("ignore **/*.txt\n", encoding="utf-8")
+      (first_path / "shared.txt").write_text("first\n", encoding="utf-8")
+      (second_path / "shared.txt").write_text("second\n", encoding="utf-8")
+
+      self.assertEqual([], server._list_files(first_root, recursive=True))
+      self.assertEqual(
+        ["shared.txt"],
+        [entry["path"] for entry in server._list_files(second_root, recursive=True)],
+      )
+
+
 class CommandLineListTests(unittest.TestCase):
   def setUp(self):
     self.tmp = tempfile.TemporaryDirectory()
     self.root = Path(self.tmp.name)
-    self.old_root = server.ROOT
-    server.ROOT = self.root
+    self.old_root = server.WORKSPACE_ROOT
+    server.WORKSPACE_ROOT = server.FileRoot(path=self.root)
 
   def tearDown(self):
-    server.ROOT = self.old_root
+    server.WORKSPACE_ROOT = self.old_root
     self.tmp.cleanup()
 
   def _run_main(self, *args: str) -> tuple[int, str, str]:
@@ -302,7 +343,7 @@ class CommandLineListTests(unittest.TestCase):
     self.assertEqual(server.LIST_FILES_MAX_ENTRIES + 1, len(stdout.splitlines()))
 
   def test_list_returns_error_when_root_is_missing(self):
-    server.ROOT = self.root / "missing"
+    server.WORKSPACE_ROOT = server.FileRoot(path=self.root / "missing")
 
     code, stdout, stderr = self._run_main("--list")
 

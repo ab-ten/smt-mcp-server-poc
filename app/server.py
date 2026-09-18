@@ -45,7 +45,6 @@ mcp = AccessLogFastMCP(
 )
 
 
-ROOT = Path(os.environ.get("MCP_ROOT", "/workspace")).resolve()
 MAX_READ_BYTES = int(os.environ.get("MAX_READ_BYTES", "262144"))
 MAX_SCAN_BYTES = int(os.environ.get("MAX_SCAN_BYTES", "1048576"))
 MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "100"))
@@ -115,6 +114,17 @@ DEFAULT_ALLOW_RULES = [
 FALLBACK_ENCODING_EXTS = {".bat", ".cmd"}
 
 @dataclass(frozen=True)
+class FileRoot:
+  """MCP から公開するファイルツリーのルートを表します。"""
+  path: Path
+
+
+WORKSPACE_ROOT = FileRoot(
+  path=Path(os.environ.get("MCP_ROOT", "/workspace")).resolve(),
+)
+
+
+@dataclass(frozen=True)
 class McpIgnorePolicy:
   """MCP 公開ポリシーの ignore / allow パターンを表します。"""
   ignore_patterns: tuple[str, ...]
@@ -131,40 +141,40 @@ def _parts(path: str) -> tuple[str, ...]:
     raise ValueError("parent-directory traversal is not allowed")
   return parts
 
-def _safe_path(path: str) -> Path:
+def _safe_path(file_root: FileRoot, path: str) -> Path:
   """ワークスペース外へ出ない安全な絶対パスを返します。"""
-  cur = ROOT
+  cur = file_root.path
   for part in _parts(path):
     cur = cur / part
     if cur.is_symlink():
       raise ValueError("symlinks are not followed")
 
   resolved = cur.resolve(strict=False)
-  if resolved != ROOT and ROOT not in resolved.parents:
+  if resolved != file_root.path and file_root.path not in resolved.parents:
     raise ValueError("path escapes workspace")
   return resolved
 
-def _rel(path: Path) -> str:
+def _rel(file_root: FileRoot, path: Path) -> str:
   """ワークスペースルートからの相対パス文字列を返します。"""
-  if path == ROOT:
+  if path == file_root.path:
     return "."
-  return path.relative_to(ROOT).as_posix()
+  return path.relative_to(file_root.path).as_posix()
 
-def _ancestor_dirs_from_root(path: Path) -> list[Path]:
+def _ancestor_dirs_from_root(file_root: FileRoot, path: Path) -> list[Path]:
   """ワークスペースルートから指定ディレクトリまでの祖先ディレクトリを返します。"""
-  if path == ROOT:
-    return [ROOT]
+  if path == file_root.path:
+    return [file_root.path]
 
-  dirs = [ROOT]
-  cur = ROOT
-  for part in path.relative_to(ROOT).parts:
+  dirs = [file_root.path]
+  cur = file_root.path
+  for part in path.relative_to(file_root.path).parts:
     cur = cur / part
     dirs.append(cur)
   return dirs
 
-def _mcpignore_dirs_for(path: Path) -> list[Path]:
+def _mcpignore_dirs_for(file_root: FileRoot, path: Path) -> list[Path]:
   """指定パスに適用される可能性がある .mcpignore の配置ディレクトリを返します。"""
-  return _ancestor_dirs_from_root(path.parent)
+  return _ancestor_dirs_from_root(file_root, path.parent)
 
 def _expand_mcpignore_pattern(pattern: str) -> tuple[str, ...]:
   """ディレクトリパターンを配下のファイルにも明示的に適用します。"""
@@ -224,10 +234,10 @@ def _merge_mcpignore_policies(policies: list[McpIgnorePolicy]) -> McpIgnorePolic
     allow_patterns=tuple(allow_patterns),
   )
 
-def _policy_for_dir(policy_dir: Path) -> McpIgnorePolicy:
+def _policy_for_dir(file_root: FileRoot, policy_dir: Path) -> McpIgnorePolicy:
   """指定ディレクトリに存在する MCP 公開ポリシールールを返します。"""
   policies: list[McpIgnorePolicy] = []
-  if policy_dir == ROOT:
+  if policy_dir == file_root.path:
     policies.append(_parse_mcpignore_lines(DEFAULT_IGNORE_RULES + DEFAULT_ALLOW_RULES))
   policies.append(_read_mcpignore_policy(policy_dir))
   return _merge_mcpignore_policies(policies)
@@ -252,61 +262,61 @@ def _mcpignore_decision(policy: McpIgnorePolicy, candidates: list[str]) -> Polic
 
   return "fallback"
 
-def _file_policy_decision(path: Path) -> PolicyDecision:
+def _file_policy_decision(file_root: FileRoot, path: Path) -> PolicyDecision:
   """下位から上位へ fallback しながらファイル公開ポリシーを判定します。"""
-  for policy_dir in reversed(_mcpignore_dirs_for(path)):
+  for policy_dir in reversed(_mcpignore_dirs_for(file_root, path)):
     decision = _mcpignore_decision(
-      _policy_for_dir(policy_dir),
+      _policy_for_dir(file_root, policy_dir),
       _pathspec_candidates(path, policy_dir, is_dir=False),
     )
     if decision != "fallback":
       return decision
   return "ignore"
 
-def _is_hard_denied_path(path: Path, is_dir: bool = False) -> bool:
+def _is_hard_denied_path(file_root: FileRoot, path: Path, is_dir: bool = False) -> bool:
   """hard deny の pathspec に一致するかを大小文字を区別せずに判定します。"""
   candidates = [
     candidate.casefold()
-    for candidate in _pathspec_candidates(path, ROOT, is_dir)
+    for candidate in _pathspec_candidates(path, file_root.path, is_dir)
   ]
   return any(HARD_DENY_SPEC.match_file(candidate) for candidate in candidates)
 
-def _is_directory_ignored_by_policy(path: Path) -> bool:
+def _is_directory_ignored_by_policy(file_root: FileRoot, path: Path) -> bool:
   """ディレクトリが .mcpignore の ignore ルールに一致するか判定します。"""
-  if path == ROOT:
+  if path == file_root.path:
     return False
 
-  for policy_dir in _mcpignore_dirs_for(path):
-    policy = _policy_for_dir(policy_dir)
+  for policy_dir in _mcpignore_dirs_for(file_root, path):
+    policy = _policy_for_dir(file_root, policy_dir)
     ignore_spec = PathSpec.from_lines("gitwildmatch", policy.ignore_patterns)
     candidates = _pathspec_candidates(path, policy_dir, True)
     if any(ignore_spec.match_file(candidate) for candidate in candidates):
       return True
   return False
 
-def _has_ignored_ancestor_dir(path: Path) -> bool:
+def _has_ignored_ancestor_dir(file_root: FileRoot, path: Path) -> bool:
   """親ディレクトリのいずれかが ignore されているか判定します。"""
-  for directory in _ancestor_dirs_from_root(path.parent)[1:]:
-    if _is_directory_ignored_by_policy(directory):
+  for directory in _ancestor_dirs_from_root(file_root, path.parent)[1:]:
+    if _is_directory_ignored_by_policy(file_root, directory):
       return True
   return False
 
-def _is_allowed_file(path: Path) -> bool:
+def _is_allowed_file(file_root: FileRoot, path: Path) -> bool:
   """MCP ツールで公開可能なファイルか判定します。"""
   if not path.is_file() or path.is_symlink():
     return False
-  if _is_hard_denied_path(path):
+  if _is_hard_denied_path(file_root, path):
     return False
-  if _has_ignored_ancestor_dir(path):
+  if _has_ignored_ancestor_dir(file_root, path):
     return False
-  return _file_policy_decision(path) == "allow"
+  return _file_policy_decision(file_root, path) == "allow"
 
-def _is_skipped_dir(path: Path) -> bool:
+def _is_skipped_dir(file_root: FileRoot, path: Path) -> bool:
   """走査対象から除外するディレクトリかどうかを判定します。"""
   return (
     path.is_symlink()
-    or _is_hard_denied_path(path, is_dir=True)
-    or _is_directory_ignored_by_policy(path)
+    or _is_hard_denied_path(file_root, path, is_dir=True)
+    or _is_directory_ignored_by_policy(file_root, path)
   )
 
 def _text_encodings(path: Path) -> tuple[str, ...]:
@@ -324,9 +334,9 @@ def _decode_text(path: Path, data: bytes) -> str:
       continue
   raise UnicodeDecodeError("utf-8", data, 0, 1, "file is not valid text")
 
-def _is_probably_text(path: Path, max_bytes: int) -> bool:
+def _is_probably_text(file_root: FileRoot, path: Path, max_bytes: int) -> bool:
   """ファイルが許可されたサイズ内のテキストとして扱えるか判定します。"""
-  if not _is_allowed_file(path):
+  if not _is_allowed_file(file_root, path):
     return False
   if path.stat().st_size > max_bytes:
     return False
@@ -378,39 +388,39 @@ def _can_list_dir(path: Path) -> bool:
     return False
   return True
 
-def _walk_entries(base: Path):
+def _walk_entries(file_root: FileRoot, base: Path):
   """指定パス配下の走査可能なファイルとディレクトリを再帰的に列挙します。"""
   if base.is_file():
     yield base, "file"
     return
-  if base != ROOT and _is_skipped_dir(base):
+  if base != file_root.path and _is_skipped_dir(file_root, base):
     return
 
   for child, entry_type in _walk_children(base):
     if entry_type == "dir":
-      if _is_skipped_dir(child):
+      if _is_skipped_dir(file_root, child):
         continue
       if not _can_list_dir(child):
         continue
       yield child, "dir"
-      yield from _walk_entries(child)
+      yield from _walk_entries(file_root, child)
     elif entry_type == "file":
       yield child, "file"
 
-def _walk_files(base: Path):
+def _walk_files(file_root: FileRoot, base: Path):
   """指定パス配下の走査可能なファイルを再帰的に列挙します。"""
-  for path, entry_type in _walk_entries(base):
+  for path, entry_type in _walk_entries(file_root, base):
     if entry_type == "file":
       yield path
 
-def _list_public_paths() -> list[str]:
+def _list_public_paths(file_root: FileRoot) -> list[str]:
   """MCP ツールで公開されるパスを一覧化します。"""
-  if not ROOT.exists():
+  if not file_root.path.exists():
     raise ValueError("MCP_ROOT does not exist")
-  if not ROOT.is_dir():
+  if not file_root.path.is_dir():
     raise ValueError("MCP_ROOT is not a directory")
 
-  entries = list_files(recursive=True, max_entries=sys.maxsize)
+  entries = _list_files(file_root, recursive=True, max_entries=sys.maxsize)
   return [
     f"{entry['path']}/" if entry["type"] == "dir" else str(entry["path"])
     for entry in entries
@@ -420,27 +430,36 @@ def _list_public_paths() -> list[str]:
 @mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) -> list[dict[str, Any]]:
   """ワークスペース配下のファイルとディレクトリを一覧表示します。"""
-  base = _safe_path(path)
+  return _list_files(WORKSPACE_ROOT, path, recursive, max_entries)
+
+def _list_files(
+  file_root: FileRoot,
+  path: str = "",
+  recursive: bool = False,
+  max_entries: int = 200,
+) -> list[dict[str, Any]]:
+  """指定ルート配下のファイルとディレクトリを一覧表示します。"""
+  base = _safe_path(file_root, path)
   if not base.exists():
     raise ValueError("path does not exist")
   if not base.is_dir():
     raise ValueError("path is not a directory")
-  if base != ROOT and _is_skipped_dir(base):
+  if base != file_root.path and _is_skipped_dir(file_root, base):
     raise ValueError("path is not allowed")
 
   max_entries = max(1, min(max_entries, LIST_FILES_MAX_ENTRIES))
   entries: list[dict[str, Any]] = []
 
   if recursive:
-    for child, entry_type in _walk_entries(base):
+    for child, entry_type in _walk_entries(file_root, base):
       if len(entries) >= max_entries:
         break
 
-      if entry_type == "file" and not _is_allowed_file(child):
+      if entry_type == "file" and not _is_allowed_file(file_root, child):
         continue
 
       entry: dict[str, Any] = {
-        "path": _rel(child),
+        "path": _rel(file_root, child),
         "type": entry_type,
       }
 
@@ -453,15 +472,15 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
       if len(entries) >= max_entries:
         break
       if entry_type == "dir":
-        if _is_skipped_dir(child):
+        if _is_skipped_dir(file_root, child):
           continue
         entries.append({
-          "path": _rel(child),
+          "path": _rel(file_root, child),
           "type": "dir",
         })
-      elif entry_type == "file" and _is_allowed_file(child):
+      elif entry_type == "file" and _is_allowed_file(file_root, child):
         entries.append({
-          "path": _rel(child),
+          "path": _rel(file_root, child),
           "type": "file",
           "size": child.stat().st_size,
         })
@@ -471,17 +490,26 @@ def list_files(path: str = "", recursive: bool = False, max_entries: int = 200) 
 @mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str]:
   """シェル形式のワイルドカードでファイルを検索します。"""
+  return _find_files(WORKSPACE_ROOT, pattern, path, max_results)
+
+def _find_files(
+  file_root: FileRoot,
+  pattern: str,
+  path: str = "",
+  max_results: int = 100,
+) -> list[str]:
+  """指定ルート配下のファイルをシェル形式のワイルドカードで検索します。"""
   if not pattern:
     raise ValueError("pattern is required")
 
-  base = _safe_path(path)
+  base = _safe_path(file_root, path)
   max_results = max(1, min(max_results, MAX_RESULTS))
   matches: list[str] = []
 
-  for file_path in _walk_files(base):
-    if not _is_allowed_file(file_path):
+  for file_path in _walk_files(file_root, base):
+    if not _is_allowed_file(file_root, file_path):
       continue
-    rel = _rel(file_path)
+    rel = _rel(file_root, file_path)
     if fnmatch.fnmatch(file_path.name, pattern) or fnmatch.fnmatch(rel, pattern):
       matches.append(rel)
       if len(matches) >= max_results:
@@ -492,8 +520,17 @@ def find_files(pattern: str, path: str = "", max_results: int = 100) -> list[str
 @mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str, Any]:
   """ワークスペース内のテキストファイルを行単位で読み取ります。"""
-  file_path = _safe_path(path)
-  if not _is_probably_text(file_path, MAX_READ_BYTES):
+  return _read_file(WORKSPACE_ROOT, path, start_line, max_lines)
+
+def _read_file(
+  file_root: FileRoot,
+  path: str,
+  start_line: int = 1,
+  max_lines: int = 400,
+) -> dict[str, Any]:
+  """指定ルート内のテキストファイルを行単位で読み取ります。"""
+  file_path = _safe_path(file_root, path)
+  if not _is_probably_text(file_root, file_path, MAX_READ_BYTES):
     raise ValueError("file is not allowed, is too large, or is not supported text")
 
   start_line = max(1, start_line)
@@ -511,7 +548,7 @@ def read_file(path: str, start_line: int = 1, max_lines: int = 400) -> dict[str,
     end_line = line_no
 
   return {
-    "path": _rel(file_path),
+    "path": _rel(file_root, file_path),
     "start_line": start_line,
     "end_line": end_line,
     "text": "\n".join(selected),
@@ -526,24 +563,35 @@ def search_text(
   max_results: int = 100,
 ) -> list[dict[str, Any]]:
   """ワークスペース内のテキストファイルから文字列または正規表現を検索します。"""
+  return _search_text(WORKSPACE_ROOT, query, path, regex, case_sensitive, max_results)
+
+def _search_text(
+  file_root: FileRoot,
+  query: str,
+  path: str = "",
+  regex: bool = False,
+  case_sensitive: bool = False,
+  max_results: int = 100,
+) -> list[dict[str, Any]]:
+  """指定ルート内のテキストファイルから文字列または正規表現を検索します。"""
   if not query:
     raise ValueError("query is required")
 
-  base = _safe_path(path)
+  base = _safe_path(file_root, path)
   max_results = max(1, min(max_results, MAX_RESULTS))
   flags = 0 if case_sensitive else re.IGNORECASE
   pattern = re.compile(query if regex else re.escape(query), flags)
 
   results: list[dict[str, Any]] = []
 
-  for file_path in _walk_files(base):
-    if not _is_probably_text(file_path, MAX_SCAN_BYTES):
+  for file_path in _walk_files(file_root, base):
+    if not _is_probably_text(file_root, file_path, MAX_SCAN_BYTES):
       continue
 
     for line_no, line in enumerate(_read_text_file(file_path).splitlines(), start=1):
       if pattern.search(line):
         results.append({
-          "path": _rel(file_path),
+          "path": _rel(file_root, file_path),
           "line": line_no,
           "text": line[:500],
         })
@@ -578,7 +626,7 @@ def _main(argv: list[str]) -> int:
     previous_list_files_max_entries = LIST_FILES_MAX_ENTRIES
     try:
       LIST_FILES_MAX_ENTRIES = sys.maxsize
-      for path in _list_public_paths():
+      for path in _list_public_paths(WORKSPACE_ROOT):
         print(path)
     except Exception as exc:
       print(f"error: {exc}", file=sys.stderr)
