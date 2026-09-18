@@ -58,7 +58,7 @@ DEFAULT_ALLOW_EXTS = {
   ".md", ".txt", ".rst", ".adoc",
   ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".xml",
   ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd",
-  ".uplugin", ".uproject", ".build.cs", ".target.cs",
+  ".uplugin", ".uproject", ".build.cs", ".target.cs", ".sample",
 }
 
 ALLOW_NAMES = {

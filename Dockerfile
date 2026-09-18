@@ -8,8 +8,9 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY bin/tunnel-client /usr/local/bin/tunnel-client
-RUN chmod +x /usr/local/bin/tunnel-client ;\
-    install -d -o mcp -m 750 "$HOME/.config"
+RUN chmod +x /usr/local/bin/tunnel-client \
+    && install -d -o mcp -m 750 "$HOME/.config" \
+    && mkdir -p /workflow
 
 #COPY server.py /app/server.py
 #COPY entrypoint.sh /app/entrypoint.sh

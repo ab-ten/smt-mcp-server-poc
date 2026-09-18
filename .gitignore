@@ -3,3 +3,4 @@
 /bin/tunnel-client
 __pycache__/
 .mcpignore
+/env_local.cmd
