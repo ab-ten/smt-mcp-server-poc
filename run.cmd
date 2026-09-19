@@ -21,4 +21,4 @@ if "%~1"=="--list" (
 )
 
 for %%D in ("%CD%") do title MCP: %%~nxD
-docker run --rm -it --init %OPTIONS% -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m %* smt-local-files-mcp
+docker run --rm -it --init %OPTIONS% -e MCP_ROOT=/workspace -v "%ABS_PATH%:/workspace:ro" --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m --name smt-mcp-server-poc %* smt-local-files-mcp
