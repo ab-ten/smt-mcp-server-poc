@@ -28,6 +28,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 ├── run.cmd
 ├── env_local.cmd.sample
 ├── requirements.txt
+├── requirements.lock
 ├── app
 │   ├── auth.py
 │   ├── entrypoint.sh
@@ -49,6 +50,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 | `run.cmd` | Windows 環境向けの Docker コンテナ起動用スクリプトです。 |
 | `env_local.cmd.sample` | ローカル環境固有の設定例です。共有 workflow ディレクトリを使用する場合は `env_local.cmd` としてコピーして設定します。 |
 | `requirements.txt` | Python 依存関係を定義します。 |
+| `requirements.lock` | Docker build が実際に使用する解決済み依存定義。 |
 
 ## 前提条件
 
@@ -62,6 +64,13 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 ### 1. tunnel-client の配置
 
 `tunnel-client` はリポジトリに含めません。GitHub Releases から Linux 用の実行バイナリを取得し、展開後の実行ファイルを `bin/tunnel-client` として配置してください。
+動作が確認されているバージョンは 0.0.9 です。
+tunnel-client はこのリポジトリには含まれないため、OpenAI の公式 Releases から取得してください。
+
+```
+tunnel-client --version
+0.0.9+62b9b42f698ec5319d2115e0c0ff1dcf6557d7ae (git sha: 62b9b42f698ec5319d2115e0c0ff1dcf6557d7ae)
+```
 
 取得元:
 
@@ -398,6 +407,8 @@ Secure Tunneling 側では、サービスアカウントと API キーを作成�
 - Linux や macOS で利用する場合は、`run.cmd` と同等の `docker run` コマンドまたはシェルスクリプトを用意してください。
 - `bin/tunnel-client` は実行ファイルのため、配布・更新方法や対応プラットフォームを別途管理してください。
 - `%HOME%\smt-mcp-server-poc.env` や `.env` には API キーなどの秘密情報が含まれるため、リポジトリへコミットしないでください。
+- このリポジトリでは原則として事前相談のない Pull Request は受け付けていません。変更提案がある場合は、まず Issue でご相談ください。README 等の翻訳のみを目的とした Pull Request は受け付けていません。
+- 脆弱性の報告方法については [SECURITY.md](./SECURITY.md) を参照してください。
 
 ## 備考
 ChatGPT App、Secure MCP Tunnel、Amazon Cognito の構築手順は
