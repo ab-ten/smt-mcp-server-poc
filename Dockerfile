@@ -4,8 +4,8 @@ RUN useradd -m -u 10001 mcp
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY requirements.lock /app/requirements.lock
+RUN pip install --no-cache-dir -r /app/requirements.lock
 
 COPY bin/tunnel-client /usr/local/bin/tunnel-client
 RUN chmod +x /usr/local/bin/tunnel-client \
