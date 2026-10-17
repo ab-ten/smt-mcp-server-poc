@@ -17,6 +17,7 @@ markdown-it-py==4.2.0
 mcp==1.30.0
 mdurl==0.1.2
 pathspec==0.12.1
+pillow==12.3.0
 pycparser==3.0
 pydantic==2.13.5
 pydantic-settings==2.15.0

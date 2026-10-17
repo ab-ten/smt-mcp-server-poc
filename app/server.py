@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pathspec import PathSpec
+from mcp.server.fastmcp import Image
 from mcp.types import ToolAnnotations
 from starlette.responses import JSONResponse
 
 from auth import auth_settings, token_verifier
 from logmcp import AccessLogFastMCP
+from image_reader import parse_image_extensions, read_validated_image
 
 
 READ_ONLY_LOCAL_TOOL_ANNOTATIONS = ToolAnnotations(
@@ -47,6 +49,10 @@ mcp = AccessLogFastMCP(
 
 MAX_READ_BYTES = int(os.environ.get("MAX_READ_BYTES", "262144"))
 MAX_SCAN_BYTES = int(os.environ.get("MAX_SCAN_BYTES", "1048576"))
+MCP_IMAGE_EXTS = parse_image_extensions(os.environ.get("MCP_IMAGE_EXTS", ".png,.jpg,.jpeg,.webp"))
+MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", "4194304"))
+MAX_IMAGE_PIXELS = int(os.environ.get("MAX_IMAGE_PIXELS", "16000000"))
+
 MAX_RESULTS = int(os.environ.get("MAX_RESULTS", "100"))
 LIST_FILES_MAX_ENTRIES = 1000
 MCP_IGNORE_NAME = ".mcpignore"
@@ -557,6 +563,26 @@ def _read_file(
     "end_line": end_line,
     "text": "\n".join(selected),
   }
+
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
+def read_image(path: str) -> Image:
+  """ワークスペース内で明示的に公開された画像を元データのまま返します。
+
+  MCP_IMAGE_EXTS、.mcpignore、hard deny、サイズ・画素数制限を適用します。
+  未対応形式や破損画像はエラーとなります。
+  """
+  image_path = _safe_path(WORKSPACE_ROOT, path)
+  if image_path.suffix.casefold() not in MCP_IMAGE_EXTS:
+    raise ValueError("image extension is not configured")
+  if not _is_allowed_file(WORKSPACE_ROOT, image_path):
+    raise ValueError("path is not allowed")
+
+  data, mime_type = read_validated_image(
+    image_path,
+    max_bytes=MAX_IMAGE_BYTES,
+    max_pixels=MAX_IMAGE_PIXELS,
+  )
+  return Image(data=data, format=mime_type.removeprefix("image/"))
 
 @mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def read_workflow(

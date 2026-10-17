@@ -1,6 +1,6 @@
 # Secure MCP Tunnel MCP Server PoC
 
-ローカルワークスペース内のテキストファイルを読み取り専用で参照するための MCP サーバー PoC です。
+ローカルワークスペース内のテキストファイルおよび明示許可された画像ファイルを読み取り専用で参照するための MCP サーバー PoC です。
 
 Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で起動し、`tunnel-client` を通じて Secure Tunneling のトンネルに接続します。
 公開される操作はワークスペースのファイル一覧・検索・読み取り・テキスト検索と、任意設定の共有 workflow ファイルの読み取りに限定されています。
@@ -11,6 +11,7 @@ Docker コンテナ内で Python 製の MCP サーバーを streamable HTTP で�
 - ワークスペース配下のファイルとディレクトリの一覧取得
 - ワイルドカードによるファイル検索
 - UTF-8 テキストファイルの行単位読み取り
+- 明示許可された画像ファイルの無変換読み取り（MCP ImageContent）
 - UTF-8 テキストファイル内の文字列検索
 - `.cmd` / `.bat` ファイルの CP932 フォールバック読み取り
 - 任意設定の共有 workflow ディレクトリからのテキストファイル読み取り
@@ -111,6 +112,9 @@ docker build -t smt-local-files-mcp .
 | `MCP_HTTP_PATH` | いいえ | MCP サーバーの streamable HTTP パスです。既定値は `/mcp` です。 |
 | `TUNNEL_LOG_LEVEL` | いいえ | `tunnel-client` のログレベルです。既定値は `warn` です。 |
 | `MAX_READ_BYTES` | いいえ | `read_file` で読み取り可能な最大ファイルサイズです。既定値は `262144` です。 |
+| `MCP_IMAGE_EXTS` | いいえ | `read_image` で受け付ける拡張子のカンマ区切りリスト。既定値は `.png,.jpg,.jpeg,.webp`。空文字列は無効化。公開には `.mcpignore` の明示許可が別途必要です。 |
+| `MAX_IMAGE_BYTES` | いいえ | `read_image` で読み取る最大ファイルサイズです。既定値は `4194304`（4 MiB）です。 |
+| `MAX_IMAGE_PIXELS` | いいえ | `read_image` の最大画素数です。既定値は `16000000` です。 |
 | `MAX_SCAN_BYTES` | いいえ | `search_text` で走査可能な最大ファイルサイズです。既定値は `1048576` です。 |
 | `MAX_RESULTS` | いいえ | 検索系ツールの最大結果件数です。既定値は `100` です。 |
 | `MCP_AUTH_ENABLED` | いいえ | Cognito 認証を有効化するかどうかを指定します。`1`、`true`、`yes`、`on` のいずれかで有効になります。既定値は無効です。 |
@@ -343,6 +347,31 @@ UTF-8 テキストファイルを行単位で読み取ります。`.cmd` / `.bat
 - `path`: 読み取り対象の相対パスです。
 - `start_line`: 読み取り開始行です。既定値は `1` です。
 - `max_lines`: 読み取り最大行数です。1 から 2000 の範囲に丸められます。
+
+### `read_image`
+
+`.mcpignore` で明示的に `allow` された画像ファイルを、変更せずに MCP の画像コンテンツとして返します。
+
+```json
+{"path": "docs/images/architecture.png"}
+```
+
+- `MCP_ROOT` からの相対パスのみ。既存のシンボリックリンク、hard deny、`.mcpignore` の制限を適用します。
+- `MCP_IMAGE_EXTS` はカンマ区切りの拡張子（大文字・小文字、前後の空白、先頭ドットの有無は正規化）で、既定値は `.png,.jpg,.jpeg,.webp` です。空文字列に設定すると画像読み取りを無効にします。
+- **拡張子の設定は公開許可ではありません。** 画像は既定の allow policy に追加されません。ワークスペースの `.mcpignore` などで個別に許可してください。
+- 設定した拡張子が Pillow でサポートされない、または画像の内容と形式が一致しない場合、読み取り時にエラーとなります。MCP SDK が適切な画像 MIME タイプを生成できない場合もエラーとします。
+- `MAX_IMAGE_BYTES`（既定 4194304 バイト）と `MAX_IMAGE_PIXELS`（既定 16000000 ピクセル）で読み取り上限を制限します。画像変換・縮小・メタデータ削除は行いません。
+- GIF 等のアニメーションでは、Pillow による検証は最初のフレームに限定されます。MCP クライアントが各画像形式を表示・認識できるかは別途確認してください。
+
+`.mcpignore` の例:
+
+```text
+allow docs/images/**/*.png
+allow docs/images/**/*.jpg
+allow docs/images/**/*.webp
+```
+
+必要な場合、`MCP_IMAGE_EXTS=.png,.jpg,.jpeg,.webp,.gif,.bmp,.tiff,.avif` のように拡張できます。追加指定した画像形式が実環境のPillowに対応していることを確認してください。
 
 ### `read_workflow`
 
