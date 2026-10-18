@@ -8,6 +8,7 @@ set OPTIONS=-v "%~dp0\app:/app:ro"
 
 if exist "%~dp0\env_local.cmd" call "%~dp0\env_local.cmd"
 if defined WORKFLOW_PATH set OPTIONS=%OPTIONS% --mount "type=bind,src=%WORKFLOW_PATH%,dst=/workflow,readonly"
+if defined INBOX_PATH set OPTIONS=%OPTIONS% --mount "type=bind,src=%INBOX_PATH%,dst=/inbox,readonly"
 
 if exist "%HOME%\smt-mcp-server-poc.env" (
   set OPTIONS=%OPTIONS% --env-file "%HOME%\smt-mcp-server-poc.env"

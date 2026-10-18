@@ -373,6 +373,23 @@ allow docs/images/**/*.webp
 
 必要な場合、`MCP_IMAGE_EXTS=.png,.jpg,.jpeg,.webp,.gif,.bmp,.tiff,.avif` のように拡張できます。追加指定した画像形式が実環境のPillowに対応していることを確認してください。
 
+### `read_inbox_image`
+
+共有 Inbox ディレクトリ内の画像を読み取ります。
+
+ホスト側の Inbox ディレクトリは、`env_local.cmd` の
+`INBOX_PATH` で指定します。`run.cmd` がコンテナ内の
+`/inbox` に読み取り専用でマウントします。
+
+`INBOX_PATH` が未設定の場合、Inbox はマウントされません。
+
+`path` は Inbox ルートからの相対パスです。
+
+既存の `read_image` と同じ画像形式、サイズ制限、
+アクセス制御を使用します。
+
+Inbox 内の `.mcpignore` で公開対象を明示的に許可してください。
+
 ### `read_workflow`
 
 共有 workflow ディレクトリ内のテキストファイルを行単位で読み取ります。
