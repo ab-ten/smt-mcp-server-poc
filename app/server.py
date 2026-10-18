@@ -133,6 +133,10 @@ WORKFLOW_ROOT = FileRoot(
   path=Path("/workflow").resolve(),
 )
 
+INBOX_ROOT = FileRoot(
+  path=Path("/inbox").resolve(),
+)
+
 
 @dataclass(frozen=True)
 class McpIgnorePolicy:
@@ -564,17 +568,16 @@ def _read_file(
     "text": "\n".join(selected),
   }
 
-@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
-def read_image(path: str) -> Image:
-  """ワークスペース内で明示的に公開された画像を元データのまま返します。
+def _read_image(file_root: FileRoot, path: str) -> Image:
+  """指定ルートで公開を許可された画像を元のバイト列で返す。
 
-  MCP_IMAGE_EXTS、.mcpignore、hard deny、サイズ・画素数制限を適用します。
-  未対応形式や破損画像はエラーとなります。
+  拡張子、.mcpignore、hard deny、サイズ・画素数制限を適用する。
+  対応外形式や検証に失敗した画像は ValueError とする。
   """
-  image_path = _safe_path(WORKSPACE_ROOT, path)
+  image_path = _safe_path(file_root, path)
   if image_path.suffix.casefold() not in MCP_IMAGE_EXTS:
     raise ValueError("image extension is not configured")
-  if not _is_allowed_file(WORKSPACE_ROOT, image_path):
+  if not _is_allowed_file(file_root, image_path):
     raise ValueError("path is not allowed")
 
   data, mime_type = read_validated_image(
@@ -583,6 +586,22 @@ def read_image(path: str) -> Image:
     max_pixels=MAX_IMAGE_PIXELS,
   )
   return Image(data=data, format=mime_type.removeprefix("image/"))
+
+
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
+def read_image(path: str) -> Image:
+  """ワークスペース内で明示的に公開された画像を元データのまま返す。"""
+  return _read_image(WORKSPACE_ROOT, path)
+
+
+@mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
+def read_inbox_image(path: str) -> Image:
+  """共有 Inbox 内で明示的に公開された画像を元データのまま返す。
+
+  path は Inbox ルートからの相対パスとする。
+  """
+  return _read_image(INBOX_ROOT, path)
+
 
 @mcp.tool(annotations=READ_ONLY_LOCAL_TOOL_ANNOTATIONS)
 def read_workflow(

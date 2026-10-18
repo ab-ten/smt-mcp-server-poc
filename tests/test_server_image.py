@@ -104,6 +104,30 @@ class ReadImageToolTests(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "MAX_IMAGE_PIXELS"):
         server.read_image("picture.png")
 
+  def test_inbox_image_uses_its_own_policy(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      inbox_path = Path(tmp)
+      image_path = inbox_path / "sample.png"
+      image_path.write_bytes(self.png_path.read_bytes())
+
+      with patch.object(server, "INBOX_ROOT", server.FileRoot(path=inbox_path)):
+        with self.assertRaisesRegex(ValueError, "not allowed"):
+          server.read_inbox_image("sample.png")
+
+        (inbox_path / ".mcpignore").write_text(
+          "allow **/*.png\n", encoding="utf-8"
+        )
+
+        content = server.read_inbox_image("sample.png").to_image_content()
+        self.assertEqual("image/png", content.mimeType)
+        self.assertEqual(image_path.read_bytes(), base64.b64decode(content.data))
+
+        with self.assertRaisesRegex(ValueError, "not allowed"):
+          server.read_image("picture.png")
+
+        with self.assertRaisesRegex(ValueError, "parent-directory traversal"):
+          server.read_inbox_image("../sample.png")
+
 
 if __name__ == "__main__":
   unittest.main()
